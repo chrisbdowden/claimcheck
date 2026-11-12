@@ -11,6 +11,9 @@ SINGLETONS = {"receipt_threshold", "round_amount_threshold"}
 
 
 def _money(value: object, label: str) -> float:
+    """Accept a finite, nonnegative amount. Reject booleans, text, and infinities."""
+    if isinstance(value, bool):
+        raise ValueError(f"Invalid numeric value for {label}: {value!r}")
     try:
         number = float(value)
     except (ValueError, TypeError) as exc:
@@ -18,6 +21,42 @@ def _money(value: object, label: str) -> float:
     if not math.isfinite(number) or number < 0:
         raise ValueError(f"{label} must be finite and nonnegative")
     return number
+
+
+def _category_limits(values: object) -> dict[str, float]:
+    if not isinstance(values, dict):
+        raise ValueError("category_limits must be a mapping of category to amount")
+    cleaned: dict[str, float] = {}
+    for key, value in values.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"category_limit requires a nonblank category name: {key!r}")
+        cleaned[key.strip()] = _money(value, "category_limit")
+    return cleaned
+
+
+def _names(values: object, label: str) -> set[str]:
+    if not isinstance(values, (set, frozenset, list, tuple)):
+        raise ValueError(f"{label} must be a collection of names")
+    cleaned: set[str] = set()
+    for item in values:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{label} contains a blank or invalid name: {item!r}")
+        cleaned.add(item.strip())
+    return cleaned
+
+
+def _holidays(values: object) -> set[pd.Timestamp]:
+    if not isinstance(values, (set, frozenset, list, tuple)):
+        raise ValueError("holidays must be a collection of dates")
+    cleaned: set[pd.Timestamp] = set()
+    for item in values:
+        if not isinstance(item, pd.Timestamp) or pd.isna(item):
+            raise ValueError(f"Invalid ISO holiday: {item!r}")
+        day = pd.Timestamp(item.strftime("%Y-%m-%d"))
+        if item != day:
+            raise ValueError(f"Invalid ISO holiday: {item!r}")
+        cleaned.add(day)
+    return cleaned
 
 
 @dataclass
@@ -29,6 +68,19 @@ class Policy:
     weekend_restricted_categories: set[str] = field(default_factory=set)
     shared_expense_categories: set[str] = field(default_factory=set)
     holidays: set[pd.Timestamp] = field(default_factory=set)
+
+    def __post_init__(self) -> None:
+        """Apply the same checks used when a CSV is loaded."""
+        self._validate()
+
+    def _validate(self) -> None:
+        self.category_limits = _category_limits(self.category_limits)
+        self.receipt_threshold = _money(self.receipt_threshold, "receipt_threshold")
+        self.round_amount_threshold = _money(self.round_amount_threshold, "round_amount_threshold")
+        self.blocked_merchant_types = _names(self.blocked_merchant_types, "blocked_merchant_type")
+        self.weekend_restricted_categories = _names(self.weekend_restricted_categories, "weekend_restricted_category")
+        self.shared_expense_categories = _names(self.shared_expense_categories, "shared_expense_category")
+        self.holidays = _holidays(self.holidays)
 
     @classmethod
     def from_csv(cls, path: str | Path) -> "Policy":
@@ -74,6 +126,7 @@ class Policy:
                     raise ValueError(f"{setting} requires a key and empty value")
                 target = {"blocked_merchant_type": "blocked_merchant_types", "weekend_restricted_category": "weekend_restricted_categories", "shared_expense_category": "shared_expense_categories"}[setting]
                 getattr(policy, target).add(key)
+        policy._validate()
         return policy
 
     def to_frame(self) -> pd.DataFrame:

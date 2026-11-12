@@ -17,9 +17,9 @@ The Phase 0-1 archive was copied onto this branch unchanged. Phase 2 is not incl
 
 ## Documented gaps, not changed
 
-- `requirements.txt` does not yet include `openai>=1.40`. The Phase 0-1 tests do not import it.
-- The secrets example names only an Anthropic placeholder. It does not yet include `AI_PROVIDER` or `XAI_API_KEY`.
 - The empty `output/` directory from the archive is not stored in git.
+
+Later remediation is recorded in `docs/PHASE01_REMEDIATION.md`. The dual-provider dependency and placeholder lines are updated there.
 
 ## Not in this pull request
 
