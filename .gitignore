@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.streamlit/secrets.toml
+output/ai_cache.json
+
+# generated run outputs
+output/*
+!output/.gitkeep
