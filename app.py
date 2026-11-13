@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from src import ai_review
 from src.evaluate import evaluate
 from src.pipeline import run
 from src.policy import Policy
@@ -19,20 +20,23 @@ POLICY_FILE = ROOT / "data" / "policy.csv"
 st.set_page_config(page_title="ClaimCheck - AI Expense Exception Detector", layout="wide")
 
 
-def api_key() -> str | None:
+def secret(name: str) -> str | None:
     try:
-        key = st.secrets.get("ANTHROPIC_API_KEY")
+        value = st.secrets.get(name)
     except Exception:  # no secrets.toml
-        key = None
-    return key or os.environ.get("ANTHROPIC_API_KEY")
+        value = None
+    return value or os.environ.get(name) or None
+
+
+PROVIDER_LABELS = {"anthropic": "Claude (Anthropic)", "xai": "Grok (xAI)"}
 
 
 @st.cache_data(show_spinner=False)
-def analyse(raw: pd.DataFrame, policy_csv: str, use_ai: bool, key: str | None):
+def analyse(raw: pd.DataFrame, policy_csv: str, use_ai: bool, key: str | None, provider: str):
     from io import StringIO
 
-    policy = Policy.from_frame(pd.read_csv(StringIO(policy_csv), dtype=str).fillna(""))
-    res = run(raw, policy, use_ai=use_ai, api_key=key)
+    policy = Policy.from_frame(pd.read_csv(StringIO(policy_csv), dtype=str, keep_default_na=False))
+    res = run(raw, policy, use_ai=use_ai, api_key=key, provider=provider)
     report = evaluate(raw, res.exceptions) if "planted_issue" in raw.columns else None
     return res.exceptions, res.summary, res.ai_used, res.notes, report
 
@@ -44,10 +48,16 @@ uploaded = st.sidebar.file_uploader("Expense export (CSV)", type="csv") if sourc
 policy_upload = st.sidebar.file_uploader("Policy file (optional CSV)", type="csv")
 
 st.sidebar.header("AI review")
-key = api_key()
-use_ai = st.sidebar.toggle("Use Claude for reasons and description checks", value=bool(key), disabled=not key)
+names = list(ai_review.PROVIDERS)
+configured = (secret("AI_PROVIDER") or "").strip().lower()
+default = configured if configured in names else next(
+    (n for n in names if secret(ai_review.PROVIDERS[n][0])), names[0])
+provider = st.sidebar.selectbox("AI provider", names, index=names.index(default), format_func=PROVIDER_LABELS.get)
+key_name = ai_review.PROVIDERS[provider][0]
+key = secret(key_name)
+use_ai = st.sidebar.toggle("Use AI for reasons and description checks", value=bool(key), disabled=not key)
 if not key:
-    st.sidebar.caption("Add ANTHROPIC_API_KEY to Streamlit secrets to turn this on. "
+    st.sidebar.caption(f"Add {key_name} to Streamlit secrets to turn this on. "
                        "Offline mode uses rule-based reasons and a keyword description check.")
 
 # ------------------------------------------------------------------ header
@@ -66,8 +76,8 @@ policy_csv = (policy_upload.getvalue().decode() if policy_upload else POLICY_FIL
 
 try:
     with st.spinner("Checking every line..."):
-        exceptions, summary, ai_used, notes, report = analyse(raw, policy_csv, use_ai, key)
-except ValueError as e:
+        exceptions, summary, ai_used, notes, report = analyse(raw, policy_csv, use_ai, key, provider)
+except ValueError as e:  # bad columns or an invalid policy file
     st.error(f"Could not read this file: {e}")
     st.stop()
 
@@ -82,7 +92,7 @@ c2.metric("Lines flagged", f"{summary['lines_flagged']:,}",
 c3.metric("Dollars flagged", f"${summary['dollars_flagged']:,.0f}",
           f"of ${summary['dollars_reviewed']:,.0f} reviewed", delta_color="off")
 c4.metric("High severity", f"{summary['high_severity']:,}")
-st.caption(f"Mode: {'AI review (Claude API)' if ai_used else 'offline (rules + keyword check)'} · "
+st.caption(f"Mode: {'AI review (' + summary['ai_mode'] + ')' if ai_used else 'offline (rules + keyword check)'} · "
            f"full review in {summary['seconds']} s")
 
 tab_queue, tab_rules, tab_acc = st.tabs(["Exception queue", "Flags by rule", "Accuracy"])

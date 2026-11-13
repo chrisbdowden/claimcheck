@@ -8,7 +8,6 @@ CLI:
 from __future__ import annotations
 
 import argparse
-import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,20 +31,23 @@ class Result:
     notes: list[str] = field(default_factory=list)
 
 
-def run(raw: pd.DataFrame, policy: Policy, use_ai: bool = True, api_key: str | None = None) -> Result:
+def run(raw: pd.DataFrame, policy: Policy, use_ai: bool = True, api_key: str | None = None,
+        provider: str | None = None) -> Result:
     start = time.perf_counter()
     notes: list[str] = []
     df = prepare(raw)
     hits = run_rules(df, policy)
 
     reviewer = None
-    if use_ai and (api_key or os.environ.get("ANTHROPIC_API_KEY")):
-        try:
-            reviewer = ai_review.AIReviewer(api_key=api_key)
-        except Exception as e:  # missing package, bad key, etc.
-            notes.append(f"AI review unavailable ({e}); used offline checks.")
-    elif use_ai:
-        notes.append("No ANTHROPIC_API_KEY found; used offline checks.")
+    if use_ai:
+        name = ai_review.resolve_provider(provider)
+        if api_key or ai_review.available_key(name):
+            try:
+                reviewer = ai_review.AIReviewer(api_key=api_key, provider=name)
+            except Exception as e:  # missing package, bad key, etc.
+                notes.append(f"AI review unavailable ({e}); used offline checks.")
+        else:
+            notes.append(f"No {ai_review.PROVIDERS[name][0]} found; used offline checks.")
 
     ai_used = False
     if reviewer:
@@ -81,6 +83,7 @@ def run(raw: pd.DataFrame, policy: Policy, use_ai: bool = True, api_key: str | N
         "flags_by_rule": counts,
         "seconds": round(time.perf_counter() - start, 2),
     }
+    summary["ai_mode"] = f"{reviewer.provider}: {reviewer.model}" if ai_used else "offline"
     return Result(df, exceptions, summary, ai_used, notes)
 
 
@@ -89,7 +92,7 @@ def main() -> None:
     ap.add_argument("--input", default=str(ROOT / "data" / "expenses.csv"))
     ap.add_argument("--policy", default=str(ROOT / "data" / "policy.csv"))
     ap.add_argument("--out", default=str(ROOT / "output"))
-    ap.add_argument("--no-ai", action="store_true", help="skip the Claude API step")
+    ap.add_argument("--no-ai", action="store_true", help="skip the AI step (Claude or Grok API)")
     args = ap.parse_args()
 
     raw = pd.read_csv(args.input, dtype={"line_id": str})
@@ -99,7 +102,7 @@ def main() -> None:
     for_export(result.exceptions).to_csv(out / "exceptions.csv", index=False)
 
     s = result.summary
-    print(f"Mode: {'AI review (Claude API)' if result.ai_used else 'offline (no AI)'}")
+    print(f"Mode: {'AI review (' + result.summary['ai_mode'] + ')' if result.ai_used else 'offline (no AI)'}")
     for n in result.notes:
         print(f"Note: {n}")
     print(f"Lines reviewed: {s['lines_reviewed']:,}  |  flagged: {s['lines_flagged']:,}  |  "

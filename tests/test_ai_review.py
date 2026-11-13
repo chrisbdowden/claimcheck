@@ -1,32 +1,57 @@
-"""AI step tested with a fake Claude client (no network, no key needed)."""
+"""AI step tested with fake Claude and Grok clients (no network, no real keys)."""
 import json
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from src import ai_review
 from src.pipeline import run
 from src.policy import default_policy
 
 
-class FakeMessages:
+def _answer(system: str, prompt: str) -> str:
+    batch = json.loads(prompt)
+    if system.startswith("You review"):
+        out = [{"line_id": r["line_id"], "reason": "Personal vacation dinner, not business."}
+               for r in batch if "vacation" in r["description"]]
+    else:
+        out = {r["line_id"]: f"AI reason for {r['line_id']}" for r in batch}
+    return "Here you go:\n" + json.dumps(out)
+
+
+class FakeAnthropic:
+    """Mimics anthropic.Anthropic().messages.create."""
+
     def __init__(self):
         self.calls = 0
+        self.messages = self
 
     def create(self, model, max_tokens, system, messages):
         self.calls += 1
-        batch = json.loads(messages[0]["content"])
-        if system.startswith("You review"):
-            out = [{"line_id": r["line_id"], "reason": "Personal vacation dinner, not business."}
-                   for r in batch if "vacation" in r["description"]]
-        else:
-            out = {r["line_id"]: f"AI reason for {r['line_id']}" for r in batch}
-        return SimpleNamespace(content=[SimpleNamespace(type="text", text="Here you go:\n" + json.dumps(out))])
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=_answer(system, messages[0]["content"]))])
 
 
-def fake_reviewer(tmp_path):
+class FakeXAI:
+    """Mimics openai.OpenAI(base_url=xAI).chat.completions.create."""
+
+    def __init__(self):
+        self.calls = 0
+        self.chat = SimpleNamespace(completions=self)
+
+    def create(self, model, max_tokens, messages):
+        self.calls += 1
+        text = _answer(messages[0]["content"], messages[1]["content"])
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
+
+
+FAKES = {"anthropic": FakeAnthropic, "xai": FakeXAI}
+
+
+def fake_reviewer(provider, tmp_path):
     rv = ai_review.AIReviewer.__new__(ai_review.AIReviewer)
-    rv.client = SimpleNamespace(messages=FakeMessages())
+    rv.provider = provider
+    rv.client = FAKES[provider]()
     rv.model = "test-model"
     rv.cache_path = tmp_path / "cache.json"
     rv.cache = {}
@@ -44,29 +69,52 @@ def sample():
     ])
 
 
-def test_ai_catches_subtle_mismatch_and_writes_reasons(tmp_path, monkeypatch):
-    rv = fake_reviewer(tmp_path)
-    monkeypatch.setattr(ai_review, "AIReviewer", lambda api_key=None: rv)
-    res = run(sample(), default_policy(), use_ai=True, api_key="test")
+@pytest.fixture(autouse=True)
+def no_real_keys(monkeypatch):
+    for name in ("AI_PROVIDER", "ANTHROPIC_API_KEY", "XAI_API_KEY", "CLAIMCHECK_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "xai"])
+def test_ai_catches_subtle_mismatch_and_writes_reasons(provider, tmp_path, monkeypatch):
+    rv = fake_reviewer(provider, tmp_path)
+    monkeypatch.setattr(ai_review, "AIReviewer", lambda api_key=None, provider=None: rv)
+    res = run(sample(), default_policy(), use_ai=True, api_key="test", provider=provider)
     assert res.ai_used
+    assert res.summary["ai_mode"] == f"{provider}: test-model"
     ex = res.exceptions.set_index("line_id")
     assert ex.loc["L1", "rule_codes"] == "description_mismatch"      # keyword check would miss this
     assert ex.loc["L2", "rule_codes"] == "missing_receipt"
     assert ex.loc["L2", "reason"] == "AI reason for L2"
 
 
-def test_responses_are_cached(tmp_path):
-    rv = fake_reviewer(tmp_path)
-    df = ai_review.pd.DataFrame(sample())
-    rv.find_mismatches(df)
-    rv.find_mismatches(df)
-    assert rv.client.messages.calls == 1
+@pytest.mark.parametrize("provider", ["anthropic", "xai"])
+def test_responses_are_cached(provider, tmp_path):
+    rv = fake_reviewer(provider, tmp_path)
+    rv.find_mismatches(sample())
+    rv.find_mismatches(sample())
+    assert rv.client.calls == 1
     assert (tmp_path / "cache.json").exists()
 
 
-def test_offline_mode_without_key(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    res = run(sample(), default_policy(), use_ai=True)
+@pytest.mark.parametrize("provider,key_name", [("anthropic", "ANTHROPIC_API_KEY"), ("xai", "XAI_API_KEY")])
+def test_offline_mode_without_key(provider, key_name):
+    res = run(sample(), default_policy(), use_ai=True, provider=provider)
     assert not res.ai_used
     assert "L1" not in set(res.exceptions["line_id"])                 # subtle case needs the AI
-    assert any("No ANTHROPIC_API_KEY" in n for n in res.notes)
+    assert any(f"No {key_name}" in n for n in res.notes)
+
+
+def test_provider_selection(monkeypatch):
+    assert ai_review.resolve_provider() == "anthropic"
+    monkeypatch.setenv("XAI_API_KEY", "placeholder")
+    assert ai_review.resolve_provider() == "xai"                      # first key that is set
+    monkeypatch.setenv("AI_PROVIDER", "anthropic")
+    assert ai_review.resolve_provider() == "anthropic"                # explicit setting wins
+    with pytest.raises(ValueError, match="Unknown AI_PROVIDER"):
+        ai_review.resolve_provider("gemini")
+
+
+def test_missing_key_raises_clear_error():
+    with pytest.raises(RuntimeError, match="XAI_API_KEY is not set"):
+        ai_review.AIReviewer(provider="xai")

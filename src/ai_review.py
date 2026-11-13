@@ -1,4 +1,4 @@
-"""AI review step (Claude API) with an offline fallback.
+"""AI review step (Claude or Grok API) with an offline fallback.
 
 Two jobs:
 1. Write a one-sentence reason for each flagged line that an AP reviewer can
@@ -10,6 +10,10 @@ Without an API key (or with use_ai=False) the tool still runs: reasons come
 from the rule details, and rule 10 uses a simple keyword check. The keyword
 check only catches obvious mismatches; the AI step is what catches subtle
 ones such as a personal dinner described as a "family dinner".
+
+Two providers are supported, chosen by AI_PROVIDER ("anthropic" or "xai").
+If AI_PROVIDER is unset, the first provider with a key set is used
+(Anthropic, then xAI).
 
 Responses are cached in output/ai_cache.json so re-runs cost nothing.
 """
@@ -25,7 +29,30 @@ import pandas as pd
 
 from .rules import DESCRIPTION_MISMATCH
 
-DEFAULT_MODEL = os.environ.get("CLAIMCHECK_MODEL", "claude-haiku-5-5")
+PROVIDERS = {
+    # provider: (API key variable, default model)
+    "anthropic": ("ANTHROPIC_API_KEY", "claude-haiku-5-5"),
+    "xai": ("XAI_API_KEY", "grok-4.5"),  # check docs.x.ai for current model names
+}
+XAI_BASE_URL = "https://api.x.ai/v1"
+
+
+def resolve_provider(provider: str | None = None) -> str:
+    """Pick the provider: explicit argument, then AI_PROVIDER, then the first key that is set."""
+    name = (provider or os.environ.get("AI_PROVIDER") or "").strip().lower()
+    if name:
+        if name not in PROVIDERS:
+            raise ValueError(f"Unknown AI_PROVIDER {name!r}; use one of: {', '.join(PROVIDERS)}")
+        return name
+    for candidate, (env, _) in PROVIDERS.items():
+        if os.environ.get(env):
+            return candidate
+    return "anthropic"
+
+
+def available_key(provider: str) -> str | None:
+    """Return the provider's key from the environment, if set. Never print it."""
+    return os.environ.get(PROVIDERS[provider][0]) or None
 CACHE_PATH = Path(__file__).resolve().parent.parent / "output" / "ai_cache.json"
 EXPLAIN_BATCH = 25
 MISMATCH_BATCH = 50
@@ -67,17 +94,25 @@ def heuristic_mismatches(df: pd.DataFrame) -> list[dict]:
     return hits
 
 
-# ---------------------------------------------------------------- Claude API
+# ---------------------------------------------------------------- AI providers
 
 class AIReviewer:
-    def __init__(self, api_key: str | None = None, model: str = DEFAULT_MODEL, cache_path: Path = CACHE_PATH):
-        import anthropic  # imported here so the offline path needs no key
-
-        key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+    def __init__(self, api_key: str | None = None, model: str | None = None, provider: str | None = None,
+                 cache_path: Path = CACHE_PATH):
+        self.provider = resolve_provider(provider)
+        env, default_model = PROVIDERS[self.provider]
+        key = api_key or available_key(self.provider)
         if not key:
-            raise RuntimeError("ANTHROPIC_API_KEY is not set")
-        self.client = anthropic.Anthropic(api_key=key)
-        self.model = model
+            raise RuntimeError(f"{env} is not set")
+        if self.provider == "anthropic":
+            import anthropic  # imported here so the offline path needs no SDK
+
+            self.client = anthropic.Anthropic(api_key=key)
+        else:
+            from openai import OpenAI  # xAI's API is OpenAI-compatible
+
+            self.client = OpenAI(api_key=key, base_url=XAI_BASE_URL)
+        self.model = model or os.environ.get("CLAIMCHECK_MODEL") or default_model
         self.cache_path = Path(cache_path)
         self.cache = self._load_cache()
 
@@ -95,16 +130,24 @@ class AIReviewer:
         self.cache_path.write_text(json.dumps(self.cache, indent=1))
 
     def _ask(self, system: str, prompt: str) -> str:
-        key = hashlib.sha256(f"{self.model}\n{system}\n{prompt}".encode()).hexdigest()
+        key = hashlib.sha256(f"{self.provider}\n{self.model}\n{system}\n{prompt}".encode()).hexdigest()
         if key in self.cache:
             return self.cache[key]
-        msg = self.client.messages.create(
-            model=self.model,
-            max_tokens=4000,
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        if self.provider == "anthropic":
+            msg = self.client.messages.create(
+                model=self.model,
+                max_tokens=4000,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        else:
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                max_tokens=4000,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+            )
+            text = resp.choices[0].message.content or ""
         self.cache[key] = text
         self._save_cache()
         return text
