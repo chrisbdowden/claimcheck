@@ -3,7 +3,15 @@ import { HelpCircle, FlaskConical } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
-export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {
+export function PageHeader({
+  title,
+  subtitle,
+  actions,
+}: {
+  title: string;
+  subtitle?: string;
+  actions?: ReactNode;
+}) {
   return (
     <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
@@ -15,8 +23,20 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
   );
 }
 
-export function Panel({ title, description, actions, children, className, bodyClassName }: {
-  title?: ReactNode; description?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string; bodyClassName?: string;
+export function Panel({
+  title,
+  description,
+  actions,
+  children,
+  className,
+  bodyClassName,
+}: {
+  title?: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+  bodyClassName?: string;
 }) {
   return (
     <section className={cn("rounded-lg border border-border bg-card shadow-card", className)}>
@@ -38,7 +58,10 @@ export function Panel({ title, description, actions, children, className, bodyCl
 export function InfoTip({ label, children }: { label: string; children: ReactNode }) {
   return (
     <Popover>
-      <PopoverTrigger aria-label={`About ${label}`} className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground">
+      <PopoverTrigger
+        aria-label={`About ${label}`}
+        className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+      >
         <HelpCircle className="h-3.5 w-3.5" />
       </PopoverTrigger>
       <PopoverContent className="w-72 text-xs leading-relaxed">{children}</PopoverContent>
@@ -55,22 +78,52 @@ export function SimLabel({ children = "Synthetic demo data" }: { children?: Reac
   );
 }
 
-export function Notice({ children, tone = "info", icon }: { children: ReactNode; tone?: "info" | "warn"; icon?: ReactNode }) {
+export function Notice({
+  children,
+  tone = "info",
+  icon,
+}: {
+  children: ReactNode;
+  tone?: "info" | "warn";
+  icon?: ReactNode;
+}) {
   return (
-    <div role="note" className={cn("flex items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-sm",
-      tone === "warn" ? "border-sev-medium/40 bg-sev-medium-soft text-foreground" : "border-teal/30 bg-accent text-accent-foreground")}>
+    <div
+      role="note"
+      className={cn(
+        "flex items-start gap-2.5 rounded-lg border px-3.5 py-2.5 text-sm",
+        tone === "warn"
+          ? "border-sev-medium/40 bg-sev-medium-soft text-foreground"
+          : "border-teal/30 bg-accent text-accent-foreground",
+      )}
+    >
       {icon && <span className="mt-0.5 shrink-0">{icon}</span>}
       <div>{children}</div>
     </div>
   );
 }
 
-export function Kpi({ label, value, sub, tip, icon }: { label: string; value: ReactNode; sub?: ReactNode; tip?: ReactNode; icon?: ReactNode }) {
+export function Kpi({
+  label,
+  value,
+  sub,
+  tip,
+  icon,
+}: {
+  label: string;
+  value: ReactNode;
+  sub?: ReactNode;
+  tip?: ReactNode;
+  icon?: ReactNode;
+}) {
   return (
     <div className="rounded-lg border border-border bg-card p-4 shadow-card">
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-medium text-muted-foreground">{label}</span>
-        <span className="flex items-center gap-1 text-muted-foreground">{tip && <InfoTip label={label}>{tip}</InfoTip>}{icon}</span>
+        <span className="flex items-center gap-1 text-muted-foreground">
+          {tip && <InfoTip label={label}>{tip}</InfoTip>}
+          {icon}
+        </span>
       </div>
       <div className="num mt-2 text-2xl font-semibold tracking-tight text-foreground">{value}</div>
       {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
@@ -78,7 +131,15 @@ export function Kpi({ label, value, sub, tip, icon }: { label: string; value: Re
   );
 }
 
-export function EmptyState({ title, body, action }: { title: string; body?: string; action?: ReactNode }) {
+export function EmptyState({
+  title,
+  body,
+  action,
+}: {
+  title: string;
+  body?: string;
+  action?: ReactNode;
+}) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 px-6 py-12 text-center">
       <p className="text-sm font-medium text-foreground">{title}</p>

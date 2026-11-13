@@ -32,5 +32,9 @@ jobs:
         run: bunx vitest run
       - name: Type check
         run: bunx tsc --noEmit -p .
+      - name: Lint (errors fail; warnings allowed)
+        run: bunx eslint .
+      - name: Formatting
+        run: bunx prettier --check .
       - name: Production build
         run: bun run build

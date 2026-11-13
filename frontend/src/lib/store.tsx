@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { SYNTHETIC_LINES, EMPLOYEE_BY_ID } from "@/data/synthetic/dataset";
 import { DEFAULT_POLICY } from "./policy-defaults";
 import { runEngine, toFlagged } from "./demo-engine";
@@ -25,8 +33,14 @@ export interface Settings {
   notifyDigest: boolean;
 }
 const DEFAULT_SETTINGS: Settings = {
-  orgName: "Northstar Finance Demo", density: "comfortable", theme: "light", defaultSeverity: "all",
-  aiExplanations: true, aiMismatch: true, notifyHigh: true, notifyDigest: false,
+  orgName: "Northstar Finance Demo",
+  density: "comfortable",
+  theme: "light",
+  defaultSeverity: "all",
+  aiExplanations: true,
+  aiMismatch: true,
+  notifyHigh: true,
+  notifyDigest: false,
 };
 
 export const CURRENT_USER = "Dana Whitfield (Demo Reviewer)";
@@ -47,16 +61,45 @@ function seedHistory(flagged: FlaggedLine[]): HistoryEvent[] {
   flagged.forEach((f, i) => {
     const s = seedStatus(f.line.line_id);
     if (s === "New") return;
-    const d = new Date(Date.parse(f.line.expense_date + "T00:00:00Z") + (3 + (i % 9)) * 86400000 + (9 + (i % 8)) * 3600000);
+    const d = new Date(
+      Date.parse(f.line.expense_date + "T00:00:00Z") +
+        (3 + (i % 9)) * 86400000 +
+        (9 + (i % 8)) * 3600000,
+    );
     const user = users[i % 3]!;
-    ev.push({ id: `seed-${i}-a`, timestamp: d.toISOString(), user, type: "Status change", lineId: f.line.line_id, previousStatus: "New", newStatus: "In Review" });
+    ev.push({
+      id: `seed-${i}-a`,
+      timestamp: d.toISOString(),
+      user,
+      type: "Status change",
+      lineId: f.line.line_id,
+      previousStatus: "New",
+      newStatus: "In Review",
+    });
     if (s !== "In Review") {
       const d2 = new Date(d.getTime() + (1 + (i % 4)) * 86400000);
-      ev.push({ id: `seed-${i}-b`, timestamp: d2.toISOString(), user, type: "Status change", lineId: f.line.line_id, previousStatus: "In Review", newStatus: s,
-        note: s === "Cleared" ? "Documentation reviewed; consistent with policy." : "Referred to controller for follow-up." });
+      ev.push({
+        id: `seed-${i}-b`,
+        timestamp: d2.toISOString(),
+        user,
+        type: "Status change",
+        lineId: f.line.line_id,
+        previousStatus: "In Review",
+        newStatus: s,
+        note:
+          s === "Cleared"
+            ? "Documentation reviewed; consistent with policy."
+            : "Referred to controller for follow-up.",
+      });
     }
   });
-  ev.push({ id: "seed-run", timestamp: "2026-07-01T08:00:00.000Z", user: "System (demo)", type: "Analysis run", note: "Bundled synthetic dataset analyzed with frontend demonstration ruleset." });
+  ev.push({
+    id: "seed-run",
+    timestamp: "2026-07-01T08:00:00.000Z",
+    user: "System (demo)",
+    type: "Analysis run",
+    note: "Bundled synthetic dataset analyzed with frontend demonstration ruleset.",
+  });
   return ev.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 }
 
@@ -88,7 +131,7 @@ interface Store {
 }
 
 const Ctx = createContext<Store | null>(null);
-const KEY = "claimcheck-demo-v1";
+const KEY = "claimcheck-demo-v2";
 
 export function DemoProvider({ children }: { children: ReactNode }) {
   const [policy, setPolicyState] = useState<Policy>(DEFAULT_POLICY);
@@ -113,12 +156,17 @@ export function DemoProvider({ children }: { children: ReactNode }) {
         if (s.provider) setProvider(s.provider);
         if (s.settings) setSettings({ ...DEFAULT_SETTINGS, ...s.settings });
       }
-    } catch { /* ignore corrupt demo state */ }
+    } catch {
+      /* ignore corrupt demo state */
+    }
     setHydrated(true);
   }, []);
   useEffect(() => {
     if (!hydrated) return;
-    localStorage.setItem(KEY, JSON.stringify({ policy, statusOverrides, notes, userEvents, provider, settings }));
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ policy, statusOverrides, notes, userEvents, provider, settings }),
+    );
   }, [hydrated, policy, statusOverrides, notes, userEvents, provider, settings]);
   useEffect(() => {
     document.documentElement.classList.toggle("dark", settings.theme === "dark");
@@ -128,39 +176,102 @@ export function DemoProvider({ children }: { children: ReactNode }) {
   const lineById = useMemo(() => new Map(lines.map((l) => [l.line_id, l])), [lines]);
   const flagged = useMemo(() => {
     const f = toFlagged(lines, runEngine(lines, policy));
-    return f.sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.line.amount_usd - a.line.amount_usd);
+    return f.sort(
+      (a, b) =>
+        SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] ||
+        b.line.amount_usd - a.line.amount_usd,
+    );
   }, [lines, policy]);
   const flaggedById = useMemo(() => new Map(flagged.map((f) => [f.line.line_id, f])), [flagged]);
-  const seeded = useMemo(() => seedHistory(toFlagged(lines, runEngine(lines, DEFAULT_POLICY))), [lines]);
+  const seeded = useMemo(
+    () => seedHistory(toFlagged(lines, runEngine(lines, DEFAULT_POLICY))),
+    [lines],
+  );
   const history = useMemo(() => [...userEvents, ...seeded], [userEvents, seeded]);
 
   const logEvent = useCallback((e: Omit<HistoryEvent, "id" | "timestamp" | "user">) => {
-    setUserEvents((prev) => [{ ...e, id: crypto.randomUUID(), timestamp: new Date().toISOString(), user: CURRENT_USER }, ...prev]);
+    setUserEvents((prev) => [
+      { ...e, id: crypto.randomUUID(), timestamp: new Date().toISOString(), user: CURRENT_USER },
+      ...prev,
+    ]);
   }, []);
-  const statusOf = useCallback((id: string) => statusOverrides[id] ?? seedStatus(id), [statusOverrides]);
-  const setStatus = useCallback((id: string, s: ReviewStatus, note?: string) => {
-    const prev = statusOverrides[id] ?? seedStatus(id);
-    if (prev === s) return;
-    setStatusOverrides((o) => ({ ...o, [id]: s }));
-    logEvent({ type: "Status change", lineId: id, previousStatus: prev, newStatus: s, note });
-  }, [statusOverrides, logEvent]);
-  const addNote = useCallback((id: string, text: string) => {
-    setNotes((n) => ({ ...n, [id]: [...(n[id] ?? []), { text, at: new Date().toISOString(), user: CURRENT_USER }] }));
-    logEvent({ type: "Note added", lineId: id, note: text });
+  const statusOf = useCallback(
+    (id: string) => statusOverrides[id] ?? seedStatus(id),
+    [statusOverrides],
+  );
+  const setStatus = useCallback(
+    (id: string, s: ReviewStatus, note?: string) => {
+      const prev = statusOverrides[id] ?? seedStatus(id);
+      if (prev === s) return;
+      setStatusOverrides((o) => ({ ...o, [id]: s }));
+      logEvent({ type: "Status change", lineId: id, previousStatus: prev, newStatus: s, note });
+    },
+    [statusOverrides, logEvent],
+  );
+  const addNote = useCallback(
+    (id: string, text: string) => {
+      setNotes((n) => ({
+        ...n,
+        [id]: [...(n[id] ?? []), { text, at: new Date().toISOString(), user: CURRENT_USER }],
+      }));
+      logEvent({ type: "Note added", lineId: id, note: text });
+    },
+    [logEvent],
+  );
+  const setPolicy = useCallback(
+    (p: Policy, summary: string) => {
+      setPolicyState(p);
+      logEvent({ type: "Policy change", note: summary });
+    },
+    [logEvent],
+  );
+  const resetPolicy = useCallback(() => {
+    setPolicyState(DEFAULT_POLICY);
+    logEvent({ type: "Policy change", note: "Policy reset to documented defaults." });
   }, [logEvent]);
-  const setPolicy = useCallback((p: Policy, summary: string) => { setPolicyState(p); logEvent({ type: "Policy change", note: summary }); }, [logEvent]);
-  const resetPolicy = useCallback(() => { setPolicyState(DEFAULT_POLICY); logEvent({ type: "Policy change", note: "Policy reset to documented defaults." }); }, [logEvent]);
-  const inRange = useCallback((d: string) => d >= DATE_PRESETS[datePreset].from && d <= DATE_PRESETS[datePreset].to, [datePreset]);
-  const updateSettings = useCallback((s: Partial<Settings>) => setSettings((p) => ({ ...p, ...s })), []);
+  const inRange = useCallback(
+    (d: string) => d >= DATE_PRESETS[datePreset].from && d <= DATE_PRESETS[datePreset].to,
+    [datePreset],
+  );
+  const updateSettings = useCallback(
+    (s: Partial<Settings>) => setSettings((p) => ({ ...p, ...s })),
+    [],
+  );
   const resetDemo = useCallback(() => {
-    setPolicyState(DEFAULT_POLICY); setStatusOverrides({}); setNotes({}); setUserEvents([]); setProvider("offline"); setSettings(DEFAULT_SETTINGS);
+    setPolicyState(DEFAULT_POLICY);
+    setStatusOverrides({});
+    setNotes({});
+    setUserEvents([]);
+    setProvider("offline");
+    setSettings(DEFAULT_SETTINGS);
   }, []);
   const employeeName = useCallback((id: string) => EMPLOYEE_BY_ID[id]?.name ?? id, []);
 
   const value: Store = {
-    lines, flagged, flaggedById, lineById, policy, setPolicy, resetPolicy, statusOf, setStatus, notes, addNote,
-    history, logEvent, datePreset, setDatePreset, inRange, provider, setProvider, settings, updateSettings,
-    selectedId, setSelectedId, employeeName, resetDemo,
+    lines,
+    flagged,
+    flaggedById,
+    lineById,
+    policy,
+    setPolicy,
+    resetPolicy,
+    statusOf,
+    setStatus,
+    notes,
+    addNote,
+    history,
+    logEvent,
+    datePreset,
+    setDatePreset,
+    inRange,
+    provider,
+    setProvider,
+    settings,
+    updateSettings,
+    selectedId,
+    setSelectedId,
+    employeeName,
+    resetDemo,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

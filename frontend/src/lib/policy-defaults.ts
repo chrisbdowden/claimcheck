@@ -21,6 +21,6 @@ export const DEFAULT_POLICY: Policy = {
     { date: "2026-01-19", name: "Martin Luther King Jr. Day" },
     { date: "2026-02-16", name: "Presidents' Day" },
     { date: "2026-05-25", name: "Memorial Day" },
-    { date: "2026-07-03", name: "Independence Day (observed)" },
+    { date: "2026-06-19", name: "Juneteenth" },
   ],
 };

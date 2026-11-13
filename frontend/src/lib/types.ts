@@ -5,10 +5,10 @@ export type RuleId =
   | "exact_duplicate"
   | "near_duplicate"
   | "cross_employee_duplicate"
-  | "over_policy_limit"
+  | "over_limit"
   | "missing_receipt"
   | "split_transaction"
-  | "round_number"
+  | "round_amount"
   | "weekend_holiday"
   | "blocked_category"
   | "description_mismatch";
@@ -71,7 +71,13 @@ export interface HistoryEvent {
   id: string;
   timestamp: string;
   user: string;
-  type: "Status change" | "Note added" | "Policy change" | "Analysis run" | "Export" | "Settings change";
+  type:
+    | "Status change"
+    | "Note added"
+    | "Policy change"
+    | "Analysis run"
+    | "Export"
+    | "Settings change";
   lineId?: string | undefined;
   previousStatus?: ReviewStatus | undefined;
   newStatus?: ReviewStatus | undefined;
