@@ -1,0 +1,40 @@
+name: Frontend CI
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend.yml"
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Run tests
+        run: bunx vitest run
+      - name: Type check
+        run: bunx tsc --noEmit -p .
+      - name: Lint (errors fail; warnings allowed)
+        run: bunx eslint .
+      - name: Formatting
+        run: bunx prettier --check .
+      - name: Production build
+        run: bun run build
