@@ -6,6 +6,8 @@ ClaimCheck reviews every line of an expense export instead of a sample. It check
 
 **Live demo (Python app):** https://claimcheck-dowden.streamlit.app (offline mode, no API key)
 
+**API (Python engine as a web service):** https://claimcheck-api.vercel.app, the backend the front end calls; see [service/README.md](service/README.md).
+
 **Front-end prototype (live):** https://claimcheck-truth-compass.lovable.app, the reviewer experience built in Lovable (`frontend/`), using the same 10 rules in the browser on its own synthetic dataset.
 
 ![Exception queue: every flagged line ranked by severity, with the reason it was flagged](docs/screenshots/exception-queue.png)
