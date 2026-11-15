@@ -1,6 +1,9 @@
 """Demonstrate the content scan without storing a usable credential."""
+import shutil
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -21,5 +24,9 @@ def test_scanner_allows_approved_placeholders():
     assert find_in_text(example) == []
 
 
+@pytest.mark.skipif(
+    not (ROOT / ".git").exists() or shutil.which("git") is None,
+    reason="needs a git checkout (e.g. a ZIP download or copied folder); CI always runs it",
+)
 def test_tracked_tree_has_no_credential_shaped_content():
     assert scan(ROOT) == []

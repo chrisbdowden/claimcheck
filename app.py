@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -88,9 +89,9 @@ for n in notes:
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Lines reviewed", f"{summary['lines_reviewed']:,}")
 c2.metric("Lines flagged", f"{summary['lines_flagged']:,}",
-          f"{summary['lines_flagged'] / max(summary['lines_reviewed'], 1):.1%} of lines", delta_color="off")
+          f"{summary['lines_flagged'] / max(summary['lines_reviewed'], 1):.1%} of lines", delta_color="off", delta_arrow="off")
 c3.metric("Dollars flagged", f"${summary['dollars_flagged']:,.0f}",
-          f"of ${summary['dollars_reviewed']:,.0f} reviewed", delta_color="off")
+          f"of ${summary['dollars_reviewed']:,.0f} reviewed", delta_color="off", delta_arrow="off")
 c4.metric("High severity", f"{summary['high_severity']:,}")
 st.caption(f"Mode: {'AI review (' + summary['ai_mode'] + ')' if ai_used else 'offline (rules + keyword check)'} · "
            f"full review in {summary['seconds']} s")
@@ -130,7 +131,12 @@ with tab_queue:
 # ------------------------------------------------------------------ by rule
 with tab_rules:
     counts = pd.DataFrame({"Rule": list(summary["flags_by_rule"]), "Flags": list(summary["flags_by_rule"].values())})
-    st.bar_chart(counts, x="Rule", y="Flags", horizontal=True, height=380)
+    chart = alt.Chart(counts).mark_bar().encode(
+        x=alt.X("Flags:Q", title="Flags", axis=alt.Axis(tickMinStep=1)),
+        y=alt.Y("Rule:N", sort="-x", title=None, axis=alt.Axis(labelLimit=260)),
+        tooltip=["Rule", "Flags"],
+    ).properties(height=380)
+    st.altair_chart(chart, width="stretch")
     st.caption("A line can hit more than one rule.")
 
 # ------------------------------------------------------------------ accuracy
@@ -141,14 +147,16 @@ with tab_acc:
         o = report.overall
         a1, a2, a3, a4 = st.columns(4)
         a1.metric("Planted exceptions", o["planted"])
-        a2.metric("Found (recall)", f"{o['recall']:.0%}", f"{o['true_positives']} of {o['planted']}", delta_color="off")
+        a2.metric("Found (recall)", f"{o['recall']:.0%}", f"{o['true_positives']} of {o['planted']}", delta_color="off", delta_arrow="off")
         a3.metric("Flags that were real (precision)", f"{o['precision']:.0%}")
         a4.metric("Clean lines wrongly flagged", f"{report.lines['clean_lines_flagged']}",
-                  f"of {report.lines['lines_total'] - report.lines['lines_planted']:,}", delta_color="off")
+                  f"of {report.lines['lines_total'] - report.lines['lines_planted']:,}", delta_color="off", delta_arrow="off")
         t = report.by_rule.rename(columns=lambda c: c.replace("_", " ").capitalize())
+        for c in ("Precision", "Recall"):
+            t[c] = t[c] * 100  # whole-number percentages, e.g. 77%
         st.dataframe(t, hide_index=True, width="stretch", column_config={
-            "Precision": st.column_config.NumberColumn(format="percent"),
-            "Recall": st.column_config.NumberColumn(format="percent"),
+            "Precision": st.column_config.NumberColumn(format="%.0f%%"),
+            "Recall": st.column_config.NumberColumn(format="%.0f%%"),
         })
         if len(report.errors):
             st.subheader("Misses and false positives")

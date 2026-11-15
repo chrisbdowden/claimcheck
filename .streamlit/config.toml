@@ -1,0 +1,6 @@
+# Public-demo settings: hide Streamlit's developer toolbar (Deploy button etc.).
+[client]
+toolbarMode = "viewer"
+
+[browser]
+gatherUsageStats = false
