@@ -28,6 +28,8 @@ import type { Policy } from "@/lib/types";
 export const Route = createFileRoute("/policy")({
   head: () => ({
     meta: [
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
       { title: "Policy Configuration — ClaimCheck" },
       {
         name: "description",
@@ -47,7 +49,7 @@ export const Route = createFileRoute("/policy")({
 const CATS = Object.keys(DEFAULT_POLICY.categoryLimits);
 
 function PolicyPage() {
-  const { policy, setPolicy, resetPolicy, history, lines, flagged, logEvent } = useDemo();
+  const { policy, setPolicy, resetPolicy, history, lines, flagged, logEvent, engine } = useDemo();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [p, setP] = useState<Policy>(policy);
   const [newBlocked, setNewBlocked] = useState("");
@@ -66,8 +68,8 @@ function PolicyPage() {
   const errors = validatePolicy(draft);
   const dirty = JSON.stringify(p) !== JSON.stringify(policy);
   const impact = useMemo(
-    () => (dirty ? runEngine(lines, p).size : flagged.length),
-    [dirty, lines, p, flagged.length],
+    () => (dirty && engine === "browser" ? runEngine(lines, p).size : flagged.length),
+    [dirty, lines, p, flagged.length, engine],
   );
 
   const save = () => {
@@ -98,7 +100,10 @@ function PolicyPage() {
       changes.push(`Holidays: ${p.holidays.length} configured`);
     setPolicy(p, changes.join("; ") || "Policy saved");
     toast.success("Policy saved locally", {
-      description: `${impact} lines now flagged across the demo dataset.`,
+      description:
+        engine === "python"
+          ? "Python analysis is updating; previous results remain visible."
+          : `${impact} lines now flagged across the demo dataset.`,
     });
   };
 

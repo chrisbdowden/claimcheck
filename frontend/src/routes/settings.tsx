@@ -1,5 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Loader2, RefreshCw } from "lucide-react";
+import { API_BASE, getHealth } from "@/lib/api";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -13,6 +16,8 @@ import { LogoMark } from "@/components/layout/Logo";
 export const Route = createFileRoute("/settings")({
   head: () => ({
     meta: [
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
       { title: "Settings — ClaimCheck" },
       {
         name: "description",
@@ -51,7 +56,22 @@ function Row({
 }
 
 function SettingsPage() {
-  const { settings, updateSettings, logEvent, resetDemo } = useDemo();
+  const { settings, updateSettings, logEvent, resetDemo, engine, setEngine, apiHealth } = useDemo();
+  const healthQuery = useQuery({
+    queryKey: ["claimcheck", "health"],
+    queryFn: getHealth,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const health = healthQuery.data ?? apiHealth;
+  const testConnection = async () => {
+    const result = await healthQuery.refetch();
+    if (result.error) toast.error("Connection failed", { description: result.error.message });
+    else
+      toast.success("Connection successful", {
+        description: `ClaimCheck API · ${result.data?.status}`,
+      });
+  };
   const set = (s: Partial<Settings>, msg: string) => {
     updateSettings(s);
     logEvent({ type: "Settings change", note: msg });
@@ -61,9 +81,83 @@ function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        subtitle="Mock preferences stored in this browser. No real accounts, billing or integrations."
+        subtitle="Preferences stored in this browser and detection engine connection details."
       />
       <div className="grid gap-4 lg:grid-cols-2">
+        <Panel title="Detection engine" className="lg:col-span-2">
+          <RadioGroup
+            value={engine}
+            aria-label="Detection engine"
+            onValueChange={(value) => {
+              if (value !== "python" && value !== "browser") return;
+              setEngine(value);
+              logEvent({ type: "Settings change", note: `Detection engine: ${value}` });
+            }}
+            className="gap-3"
+          >
+            <div className="flex items-center gap-2">
+              <RadioGroupItem id="engine-python" value="python" />
+              <Label htmlFor="engine-python">Python engine (ClaimCheck API, recommended)</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <RadioGroupItem id="engine-browser" value="browser" />
+              <Label htmlFor="engine-browser">Browser demo engine (offline)</Label>
+            </div>
+          </RadioGroup>
+          <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
+            <div className="sm:col-span-3">
+              <dt className="text-muted-foreground">API URL</dt>
+              <dd className="break-all">{API_BASE}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Version</dt>
+              <dd>{health?.version ?? "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">AI availability</dt>
+              <dd>
+                {health
+                  ? health.ai.available
+                    ? `Available · ${health.ai.model ?? health.ai.provider ?? "Claude"}`
+                    : "Not configured"
+                  : "—"}
+              </dd>
+            </div>
+          </dl>
+          {health && (
+            <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-3">
+              {Object.entries(health.limits).map(([key, value]) => (
+                <div key={key}>
+                  <dt className="text-muted-foreground">{key.replaceAll("_", " ")}</dt>
+                  <dd className="num">{value.toLocaleString("en-US")}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          <Button
+            className="mt-4"
+            size="sm"
+            variant="outline"
+            onClick={() => void testConnection()}
+            disabled={healthQuery.isFetching}
+          >
+            {healthQuery.isFetching ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-1.5 h-4 w-4" />
+            )}
+            Test connection
+          </Button>
+          <p className="mt-2 text-sm" role="status">
+            {healthQuery.error
+              ? `Connection failed: ${healthQuery.error.message}`
+              : healthQuery.isFetching
+                ? "Testing connection…"
+                : health
+                  ? `Connection ready · ${health.status}`
+                  : "Connection details unavailable."}
+          </p>
+        </Panel>
         <Panel title="Organization profile">
           <Row label="Organization name" id="org" help="Fictional demo organization">
             <Input
@@ -150,7 +244,7 @@ function SettingsPage() {
               onCheckedChange={(v) => set({ aiMismatch: v }, `Mismatch review ${v ? "on" : "off"}`)}
             />
           </Row>
-          <Row label="API keys" help="Not requested — no model calls are made">
+          <Row label="API keys" help="Server-managed; never entered in this app">
             <span className="text-xs text-muted-foreground">Not applicable</span>
           </Row>
         </Panel>
@@ -177,11 +271,15 @@ function SettingsPage() {
         <Panel title="Data and privacy">
           <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted-foreground">
             <li>All employees, merchants and transactions are fictional.</li>
-            <li>Uploaded CSVs are parsed in the browser and never transmitted or saved.</li>
+            <li>
+              {engine === "python"
+                ? "Synthetic CSVs are parsed locally and sent to the Python engine when analysis runs."
+                : "Uploaded CSVs are parsed in the browser and never transmitted or saved."}
+            </li>
             <li>
               Review statuses, notes, policy and settings live in this browser's local storage.
             </li>
-            <li>No external services, AI providers or databases are connected.</li>
+            <li>The ClaimCheck API is stateless; live AI credentials stay on the server.</li>
           </ul>
           <Button
             className="mt-4"

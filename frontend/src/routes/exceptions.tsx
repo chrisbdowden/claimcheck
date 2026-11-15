@@ -17,7 +17,6 @@ import { SeverityBadge, StatusBadge, RuleChip } from "@/components/shared/badges
 import { ExceptionDrawer } from "@/components/exceptions/ExceptionDrawer";
 import { useDemo } from "@/lib/store";
 import { RULES, SEVERITY_RANK } from "@/lib/rules";
-import { EMPLOYEES } from "@/data/synthetic/dataset";
 import { usd, fmtDate, int } from "@/lib/format";
 import { downloadCsv } from "@/lib/csv";
 import type { FlaggedLine, ReviewStatus } from "@/lib/types";
@@ -25,6 +24,8 @@ import type { FlaggedLine, ReviewStatus } from "@/lib/types";
 export const Route = createFileRoute("/exceptions")({
   head: () => ({
     meta: [
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
       { title: "Exception Queue — ClaimCheck" },
       {
         name: "description",
@@ -55,7 +56,8 @@ const STATUSES: ReviewStatus[] = ["New", "In Review", "Cleared", "Escalated"];
 const PAGE = 25;
 
 function ExceptionQueue() {
-  const { flagged, statusOf, setStatus, employeeName, inRange, settings, logEvent } = useDemo();
+  const { flagged, statusOf, setStatus, employeeName, employees, inRange, settings, logEvent } =
+    useDemo();
   const [q, setQ] = useState("");
   const [sev, setSev] = useState<string>(settings.defaultSeverity);
   const [rule, setRule] = useState("all");
@@ -316,7 +318,7 @@ function ExceptionQueue() {
               label="Employee"
               value={emp}
               onChange={S(setEmp)}
-              options={EMPLOYEES.map((e) => ({ value: e.id, label: e.name }))}
+              options={employees.map((e) => ({ value: e.id, label: e.name }))}
             />
             <FilterSelect
               label="Merchant"
