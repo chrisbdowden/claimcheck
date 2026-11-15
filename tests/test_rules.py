@@ -111,3 +111,16 @@ def test_build_exceptions_sorts_by_severity_then_amount():
     ex = rules.build_exceptions(df, rules.run_rules(df, POLICY))
     assert list(ex["line_id"]) == ["L2", "L1"]
     assert ex.loc[1, "rule_codes"] == "over_limit|missing_receipt"
+
+
+def test_generated_descriptions_name_the_merchant_actually_charged():
+    """Software and conference descriptions name a product; it must be the merchant on the line."""
+    from src.generate_data import MERCHANTS, Generator
+
+    df = Generator().build()
+    for category in ("Software", "Conference fees"):
+        names = [m[0] for m in MERCHANTS[category]]
+        clean = df[(df["category"] == category) & (df["planted_issue"].fillna("") == "")]
+        for row in clean.itertuples():
+            others = [n for n in names if n != row.merchant and n in row.description]
+            assert not others, f"{row.line_id}: '{row.description}' charged at {row.merchant}"
