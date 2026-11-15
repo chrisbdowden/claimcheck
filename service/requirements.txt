@@ -1,0 +1,5 @@
+# ClaimCheck API (Vercel). Slim on purpose: no Streamlit, so the function stays under 250 MB.
+fastapi==0.163.0
+pandas==3.1.1
+anthropic==2.8.0
+openai==3.49.0

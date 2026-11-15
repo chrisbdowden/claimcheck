@@ -106,8 +106,8 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _hit(line_id: str, rule: str, detail: str) -> dict:
-    return {"line_id": line_id, "rule": rule, "detail": detail}
+def _hit(line_id: str, rule: str, detail: str, related: list[str] | None = None) -> dict:
+    return {"line_id": line_id, "rule": rule, "detail": detail, "related": list(related or [])}
 
 
 # ---------------------------------------------------------------- duplicates
@@ -125,6 +125,7 @@ def exact_duplicates(df: pd.DataFrame, policy: Policy) -> list[dict]:
                 row.line_id, EXACT_DUPLICATE,
                 f"Same {money(row.amount_usd)} at {row.merchant} on {row.expense_date:%Y-%m-%d} "
                 f"already claimed on line {first.line_id} (report {first.report_id}).",
+                [first.line_id],
             ))
     return hits
 
@@ -146,6 +147,7 @@ def near_duplicates(df: pd.DataFrame, policy: Policy) -> list[dict]:
                     b.line_id, NEAR_DUPLICATE,
                     f"{money(b.amount_usd)} at {b.merchant} is within {diff:.1%} of "
                     f"{money(a.amount_usd)} claimed {days} day(s) apart on line {a.line_id}.",
+                    [a.line_id],
                 ))
     return hits
 
@@ -165,6 +167,7 @@ def cross_employee_duplicates(df: pd.DataFrame, policy: Policy) -> list[dict]:
                 row.line_id, CROSS_EMPLOYEE_DUPLICATE,
                 f"{row.employee_id} claimed the same {money(row.amount_usd)} {row.merchant} charge "
                 f"on {row.expense_date:%Y-%m-%d} that {first.employee_id} claimed on line {first.line_id}.",
+                [first.line_id],
             ))
     return hits
 
@@ -213,12 +216,14 @@ def split_transactions(df: pd.DataFrame, policy: Policy, exclude: set[str] | Non
             continue
         total = g["amount_usd"].sum()
         if (g["amount_usd"] <= limit).all() and total > limit and g["amount_usd"].nunique() > 1:
-            ids = ", ".join(g.sort_values("_seq")["line_id"])
+            ordered = list(g.sort_values("_seq")["line_id"])
+            ids = ", ".join(ordered)
             for row in g.itertuples():
                 hits.append(_hit(
                     row.line_id, SPLIT_TRANSACTION,
                     f"{len(g)} {merchant} charges on {day:%Y-%m-%d} ({ids}) total {money(total)}, "
                     f"over the {money(limit)} limit, though each is under it.",
+                    [i for i in ordered if i != row.line_id],
                 ))
     return hits
 

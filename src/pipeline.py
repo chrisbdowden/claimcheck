@@ -29,10 +29,16 @@ class Result:
     summary: dict
     ai_used: bool
     notes: list[str] = field(default_factory=list)
+    hits: list[dict] = field(default_factory=list)  # one entry per (line, rule) finding
 
 
 def run(raw: pd.DataFrame, policy: Policy, use_ai: bool = True, api_key: str | None = None,
-        provider: str | None = None) -> Result:
+        provider: str | None = None, ai_deadline_s: float | None = None, ai_workers: int = 8) -> Result:
+    """Run the rules, then the optional AI step.
+
+    ai_deadline_s caps the AI step's wall-clock time (used by the web API). Lines the AI could
+    not check in time fall back to the keyword check, and a note says so.
+    """
     start = time.perf_counter()
     notes: list[str] = []
     df = prepare(raw)
@@ -43,7 +49,8 @@ def run(raw: pd.DataFrame, policy: Policy, use_ai: bool = True, api_key: str | N
         name = ai_review.resolve_provider(provider)
         if api_key or ai_review.available_key(name):
             try:
-                reviewer = ai_review.AIReviewer(api_key=api_key, provider=name)
+                reviewer = ai_review.AIReviewer(api_key=api_key, provider=name,
+                                                deadline_s=ai_deadline_s, max_workers=ai_workers)
             except Exception as e:  # missing package, bad key, etc.
                 notes.append(f"AI review unavailable ({e}); used offline checks.")
         else:
@@ -54,6 +61,10 @@ def run(raw: pd.DataFrame, policy: Policy, use_ai: bool = True, api_key: str | N
         try:
             hits += reviewer.find_mismatches(df)
             ai_used = True
+            if reviewer.unchecked_line_ids:
+                unchecked = df[df["line_id"].isin(reviewer.unchecked_line_ids)]
+                hits += ai_review.heuristic_mismatches(unchecked)
+                notes.append(f"AI could not check {len(unchecked)} line(s) in time; used the keyword check for them.")
         except Exception as e:
             notes.append(f"AI description check failed ({e}); used keyword check.")
             hits += ai_review.heuristic_mismatches(df)
@@ -83,8 +94,11 @@ def run(raw: pd.DataFrame, policy: Policy, use_ai: bool = True, api_key: str | N
         "flags_by_rule": counts,
         "seconds": round(time.perf_counter() - start, 2),
     }
+    if reviewer and reviewer.failed_batches and not reviewer.unchecked_line_ids:
+        notes.append("Some AI explanations were unavailable; those lines keep rule-based reasons.")
     summary["ai_mode"] = f"{reviewer.provider}: {reviewer.model}" if ai_used else "offline"
-    return Result(df, exceptions, summary, ai_used, notes)
+    summary["ai_calls"] = reviewer.calls if reviewer else 0
+    return Result(df, exceptions, summary, ai_used, notes, hits)
 
 
 def main() -> None:

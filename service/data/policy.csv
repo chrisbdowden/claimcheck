@@ -1,0 +1,26 @@
+setting,key,value
+category_limit,Airfare,800
+category_limit,Hotel,350
+category_limit,Meals,100
+category_limit,Ground transport,150
+category_limit,Client entertainment,300
+category_limit,Software,200
+category_limit,Office supplies,150
+category_limit,Conference fees,1200
+receipt_threshold,,75
+round_amount_threshold,,100
+blocked_merchant_type,Casino,
+blocked_merchant_type,Gift cards,
+blocked_merchant_type,Liquor store,
+blocked_merchant_type,Spa,
+weekend_restricted_category,Client entertainment,
+weekend_restricted_category,Office supplies,
+weekend_restricted_category,Software,
+shared_expense_category,Client entertainment,
+shared_expense_category,Ground transport,
+shared_expense_category,Meals,
+holiday,2026-01-01,
+holiday,2026-01-19,
+holiday,2026-02-16,
+holiday,2026-05-25,
+holiday,2026-06-19,

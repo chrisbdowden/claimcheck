@@ -23,6 +23,9 @@ import hashlib
 import json
 import os
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
@@ -90,6 +93,7 @@ def heuristic_mismatches(df: pd.DataFrame) -> list[dict]:
                 "line_id": row.line_id,
                 "rule": DESCRIPTION_MISMATCH,
                 "detail": f'Description "{row.description}" does not describe a {row.category.lower()} expense.',
+                "related": [],
             })
     return hits
 
@@ -97,8 +101,14 @@ def heuristic_mismatches(df: pd.DataFrame) -> list[dict]:
 # ---------------------------------------------------------------- AI providers
 
 class AIReviewer:
+    """Calls Claude or Grok in parallel batches, with a response cache and an optional time budget.
+
+    Batches that fail or run past the deadline are recorded so the caller can fall back to the
+    offline checks for those lines; nothing is silently skipped.
+    """
+
     def __init__(self, api_key: str | None = None, model: str | None = None, provider: str | None = None,
-                 cache_path: Path = CACHE_PATH):
+                 cache_path: Path | None = None, max_workers: int = 8, deadline_s: float | None = None):
         self.provider = resolve_provider(provider)
         env, default_model = PROVIDERS[self.provider]
         key = api_key or available_key(self.provider)
@@ -107,32 +117,49 @@ class AIReviewer:
         if self.provider == "anthropic":
             import anthropic  # imported here so the offline path needs no SDK
 
-            self.client = anthropic.Anthropic(api_key=key)
+            self.client = anthropic.Anthropic(api_key=key, max_retries=1, timeout=deadline_s or 120)
         else:
             from openai import OpenAI  # xAI's API is OpenAI-compatible
 
-            self.client = OpenAI(api_key=key, base_url=XAI_BASE_URL)
+            self.client = OpenAI(api_key=key, base_url=XAI_BASE_URL, max_retries=1, timeout=deadline_s or 120)
         self.model = model or os.environ.get("CLAIMCHECK_MODEL") or default_model
-        self.cache_path = Path(cache_path)
+        self.cache_path = Path(cache_path or os.environ.get("CLAIMCHECK_CACHE_PATH") or CACHE_PATH)
         self.cache = self._load_cache()
+        self.max_workers = max(1, max_workers)
+        self.deadline = (time.monotonic() + deadline_s) if deadline_s else None
+        self._lock = threading.Lock()
+        self.failed_batches = 0
+        self.unchecked_line_ids: set[str] = set()
+        self.calls = 0
 
     # -- cache
     def _load_cache(self) -> dict:
         if self.cache_path.exists():
             try:
                 return json.loads(self.cache_path.read_text())
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, OSError):
                 return {}
         return {}
 
     def _save_cache(self) -> None:
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.cache_path.write_text(json.dumps(self.cache, indent=1))
+        try:
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._lock:
+                data = json.dumps(self.cache, indent=1)
+            self.cache_path.write_text(data)
+        except OSError:  # read-only disk: keep the in-memory cache only
+            pass
+
+    def _key(self, system: str, prompt: str) -> str:
+        return hashlib.sha256(f"{self.provider}\n{self.model}\n{system}\n{prompt}".encode()).hexdigest()
 
     def _ask(self, system: str, prompt: str) -> str:
-        key = hashlib.sha256(f"{self.provider}\n{self.model}\n{system}\n{prompt}".encode()).hexdigest()
-        if key in self.cache:
-            return self.cache[key]
+        key = self._key(system, prompt)
+        with self._lock:
+            if key in self.cache:
+                return self.cache[key]
+        if self.deadline is not None and time.monotonic() > self.deadline:
+            raise TimeoutError("AI time budget used up")
         if self.provider == "anthropic":
             msg = self.client.messages.create(
                 model=self.model,
@@ -148,9 +175,23 @@ class AIReviewer:
                 messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
             )
             text = resp.choices[0].message.content or ""
-        self.cache[key] = text
-        self._save_cache()
+        with self._lock:
+            self.cache[key] = text
+            self.calls += 1
         return text
+
+    def _run_batches(self, system: str, prompts: list[str]) -> list[str | None]:
+        """Ask every prompt, in parallel. A failed or late batch returns None."""
+        results: list[str | None] = [None] * len(prompts)
+        with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+            futures = {pool.submit(self._ask, system, p): i for i, p in enumerate(prompts)}
+            for fut, i in futures.items():
+                try:
+                    results[i] = fut.result()
+                except Exception:
+                    results[i] = None
+        self._save_cache()
+        return results
 
     @staticmethod
     def _parse_json(text: str):
@@ -167,18 +208,21 @@ class AIReviewer:
             "merchants, dates and line IDs given. Do not invent facts. Reply with JSON only: "
             '{"<line_id>": "<reason>", ...}'
         )
-        reasons: dict[str, str] = {}
         records = exceptions[["line_id", "employee_id", "expense_date", "merchant", "category",
                               "amount_usd", "description", "rules", "details"]].copy()
         records["expense_date"] = records["expense_date"].dt.strftime("%Y-%m-%d")
         rows = records.to_dict("records")
-        for i in range(0, len(rows), EXPLAIN_BATCH):
-            batch = rows[i:i + EXPLAIN_BATCH]
+        batches = [rows[i:i + EXPLAIN_BATCH] for i in range(0, len(rows), EXPLAIN_BATCH)]
+        reasons: dict[str, str] = {}
+        for text in self._run_batches(system, [json.dumps(b, indent=0) for b in batches]):
+            if text is None:
+                self.failed_batches += 1
+                continue  # keep the template reasons for this batch
             try:
-                out = self._parse_json(self._ask(system, json.dumps(batch, indent=0)))
+                out = self._parse_json(text)
                 reasons.update({str(k): str(v) for k, v in out.items()})
-            except Exception:  # keep the template reason for this batch
-                continue
+            except Exception:
+                self.failed_batches += 1
         return reasons
 
     # -- job 2: rule 10
@@ -190,14 +234,19 @@ class AIReviewer:
             "descriptions. Reply with JSON only: "
             '[{"line_id": "...", "reason": "<one sentence>"}] or [] if none.'
         )
-        hits = []
         rows = df[["line_id", "merchant", "category", "amount_usd", "description"]].to_dict("records")
-        for i in range(0, len(rows), MISMATCH_BATCH):
-            batch = rows[i:i + MISMATCH_BATCH]
+        batches = [rows[i:i + MISMATCH_BATCH] for i in range(0, len(rows), MISMATCH_BATCH)]
+        hits = []
+        texts = self._run_batches(system, [json.dumps(b, indent=0) for b in batches])
+        for batch, text in zip(batches, texts):
             valid = {r["line_id"] for r in batch}
             try:
-                out = self._parse_json(self._ask(system, json.dumps(batch, indent=0)))
+                out = self._parse_json(text) if text is not None else None
             except Exception:
+                out = None
+            if out is None:
+                self.failed_batches += 1
+                self.unchecked_line_ids |= valid  # caller falls back to the keyword check for these
                 continue
             for item in out if isinstance(out, list) else []:
                 lid = str(item.get("line_id", ""))
@@ -206,5 +255,6 @@ class AIReviewer:
                         "line_id": lid,
                         "rule": DESCRIPTION_MISMATCH,
                         "detail": str(item.get("reason", "Description does not fit the category.")),
+                        "related": [],
                     })
         return hits
