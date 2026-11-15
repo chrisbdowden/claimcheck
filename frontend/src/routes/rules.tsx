@@ -8,6 +8,8 @@ import { useDemo } from "@/lib/store";
 export const Route = createFileRoute("/rules")({
   head: () => ({
     meta: [
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
       { title: "Detection Rule Library — ClaimCheck" },
       {
         name: "description",
@@ -25,20 +27,31 @@ export const Route = createFileRoute("/rules")({
 });
 
 function Rules() {
-  const { flagged } = useDemo();
+  const { flagged, engine, apiHealth } = useDemo();
+  const python = engine === "python";
+  const rules = python
+    ? (apiHealth?.rules ?? []).map((rule) => ({
+        ...RULES.find((local) => local.id === rule.id),
+        id: rule.id,
+        name: rule.label,
+        severity: rule.severity,
+      }))
+    : RULES;
   const count = (id: string) => flagged.filter((f) => f.findings.some((x) => x.rule === id)).length;
   const groups = [
     {
       title: "Deterministic rules",
       icon: Cpu,
       desc: "Fixed, explainable policy checks. These identify most exceptions.",
-      items: RULES.filter((r) => r.kind === "Deterministic"),
+      items: rules.filter((r) => r.kind === "Deterministic"),
     },
     {
       title: "AI-assisted / offline heuristic",
       icon: Sparkles,
-      desc: "Interpretive check. Offline keyword heuristic in this prototype; an AI provider is simulated only.",
-      items: RULES.filter((r) => r.kind !== "Deterministic"),
+      desc: python
+        ? "Description checks run on the server, using live AI when requested and available, or offline rules otherwise."
+        : "Interpretive check. Offline keyword heuristic in this prototype; an AI provider is simulated only.",
+      items: rules.filter((r) => r.kind !== "Deterministic"),
     },
   ];
   return (
@@ -46,8 +59,13 @@ function Rules() {
       <PageHeader
         title="Detection Rule Library"
         subtitle="What each rule looks for, what policy it depends on, and how often it fires on the demo dataset under current policy."
-        actions={<SimLabel>Simulated finding counts</SimLabel>}
+        actions={python ? undefined : <SimLabel>Simulated finding counts</SimLabel>}
       />
+      {python && (
+        <p className="mb-4 text-sm text-muted-foreground">
+          Rules run in the Python engine; the browser copy is a fallback.
+        </p>
+      )}
       {groups.map((g) => (
         <section key={g.title} className="mb-6">
           <h2 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
@@ -61,7 +79,7 @@ function Rules() {
                 key={r.id}
                 title={
                   <span className="flex items-center gap-2">
-                    <span className="num text-muted-foreground">{RULES.indexOf(r) + 1}.</span>
+                    <span className="num text-muted-foreground">{rules.indexOf(r) + 1}.</span>
                     {r.name}
                   </span>
                 }
@@ -93,7 +111,9 @@ function Rules() {
                     <dd className="text-muted-foreground">{r.example}</dd>
                   </div>
                   <div className="flex items-center justify-between border-t border-border pt-2">
-                    <dt className="text-xs text-muted-foreground">Simulated findings</dt>
+                    <dt className="text-xs text-muted-foreground">
+                      {python ? "Findings" : "Simulated findings"}
+                    </dt>
                     <dd className="num text-lg font-semibold" data-i={i}>
                       {count(r.id)}
                     </dd>

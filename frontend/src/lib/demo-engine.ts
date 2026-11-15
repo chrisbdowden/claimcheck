@@ -210,8 +210,11 @@ export interface RuleEval {
 
 /** Evaluation against synthetic planted labels: rule-level matching by line_id + rule. */
 export function evaluate(lines: ExpenseLine[], findings: Map<string, Finding[]>) {
+  // A planted_issue label can hold several rule IDs joined with "|".
   const planted = new Set(
-    lines.filter((l) => l.planted_issue).map((l) => `${l.line_id}|${l.planted_issue}`),
+    lines
+      .filter((l) => l.planted_issue)
+      .flatMap((l) => l.planted_issue!.split("|").map((r) => `${l.line_id}|${r}`)),
   );
   const detected = new Set<string>();
   for (const [id, fs] of findings) for (const f of fs) detected.add(`${id}|${f.rule}`);

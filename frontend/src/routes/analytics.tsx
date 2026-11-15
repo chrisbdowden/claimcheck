@@ -38,6 +38,8 @@ import type { ReviewStatus, Severity } from "@/lib/types";
 export const Route = createFileRoute("/analytics")({
   head: () => ({
     meta: [
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
       { title: "Analytics — ClaimCheck" },
       {
         name: "description",

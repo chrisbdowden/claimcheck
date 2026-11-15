@@ -8,6 +8,9 @@ import {
   CalendarRange,
   LogOut,
   UserCircle,
+  CheckCircle2,
+  AlertTriangle,
+  LoaderCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -48,6 +51,63 @@ import { NAV, REFERENCE_NAV } from "./nav";
 import { DATE_PRESETS, useDemo, type DatePreset } from "@/lib/store";
 import { DATASET_NAME } from "@/data/synthetic/dataset";
 import { usd } from "@/lib/format";
+import { API_BASE } from "@/lib/api";
+
+function EngineStatus() {
+  const { engine, apiStatus, apiError, analysis, apiHealth, aiNotes } = useDemo();
+  const loading = apiStatus === "loading";
+  const live = engine === "python" && apiStatus === "ready";
+  const label = loading
+    ? "Connecting…"
+    : live
+      ? "Python engine · live"
+      : apiError
+        ? "Browser demo engine · API unavailable"
+        : "Browser demo engine · offline";
+  const Icon = loading ? LoaderCircle : live ? CheckCircle2 : AlertTriangle;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className={`h-auto min-h-8 max-w-48 whitespace-normal px-2 py-1 text-[11px] leading-tight sm:max-w-64 ${live ? "border-success/30 bg-success-soft text-success" : loading ? "text-muted-foreground" : "border-sev-medium/30 bg-sev-medium-soft text-sev-medium"}`}
+        >
+          <Icon
+            className={loading ? "animate-spin motion-reduce:animate-none" : ""}
+            aria-hidden="true"
+          />
+          {label}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80 max-w-[calc(100vw-2rem)] text-xs">
+        <h2 className="mb-3 text-sm font-semibold">Engine status</h2>
+        <dl className="space-y-2">
+          {[
+            ["API URL", API_BASE],
+            ["Version", apiHealth?.version ?? "—"],
+            [
+              "Mode",
+              engine === "python" ? (analysis?.mode ?? "Connecting…") : "Browser offline fallback",
+            ],
+            ["Response time", analysis ? `${analysis.summary.seconds} s` : "—"],
+          ].map(([name, value]) => (
+            <div key={name}>
+              <dt className="text-muted-foreground">{name}</dt>
+              <dd className="break-words font-medium">{value}</dd>
+            </div>
+          ))}
+        </dl>
+        {apiError && <p className="mt-3 break-words text-sev-medium">{apiError}</p>}
+        {aiNotes.map((note, i) => (
+          <p key={i} className="mt-2 text-muted-foreground">
+            {note}
+          </p>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 function NavItems({
   items,
@@ -85,6 +145,7 @@ function NavItems({
 }
 
 function AppSidebar() {
+  const { engine } = useDemo();
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="px-3 py-4">
@@ -113,10 +174,15 @@ function AppSidebar() {
         >
           <div className="flex items-center gap-2 text-xs font-semibold text-sidebar-primary">
             <FlaskConical className="h-4 w-4 shrink-0" aria-hidden="true" />
-            <span className="group-data-[collapsible=icon]:hidden">Synthetic Demo Mode</span>
+            <span className="group-data-[collapsible=icon]:hidden">
+              {engine === "python"
+                ? "Synthetic data · Python engine"
+                : "Synthetic data · Browser fallback"}
+            </span>
           </div>
           <p className="mt-1 text-[11px] leading-snug text-sidebar-foreground/70 group-data-[collapsible=icon]:hidden">
-            Fictional data. Simulated AI. No external services.
+            Fictional data. Browser-only review history.
+            {engine === "browser" ? " AI review remains simulated." : ""}
           </p>
         </div>
       </SidebarFooter>
@@ -133,10 +199,10 @@ function TopBar() {
     ? flagged.filter((f) => f.severity === "High" && statusOf(f.line.line_id) === "New").slice(0, 5)
     : [];
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-border bg-card/95 px-3 backdrop-blur sm:px-4">
+    <header className="sticky top-0 z-20 flex min-h-14 flex-wrap items-center gap-2 border-b border-border bg-card/95 px-3 py-2 backdrop-blur sm:h-14 sm:flex-nowrap sm:px-4 sm:py-0">
       <SidebarTrigger aria-label="Toggle navigation" />
       <div className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-24 flex-1 sm:min-w-0">
         <div className="truncate text-sm font-semibold text-foreground">
           {current?.title ?? "ClaimCheck"}
         </div>
@@ -151,6 +217,7 @@ function TopBar() {
         <Database className="h-3.5 w-3.5" aria-hidden="true" />
         <span className="font-mono text-[11px]">{DATASET_NAME}</span>
       </div>
+      <EngineStatus />
       <Select value={datePreset} onValueChange={(v) => setDatePreset(v as DatePreset)}>
         <SelectTrigger className="h-8 w-auto gap-1.5 text-xs" aria-label="Date range">
           <CalendarRange className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />

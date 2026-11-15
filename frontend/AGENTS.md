@@ -33,8 +33,18 @@ use the editor.
 
 ## Project rules
 
-- ClaimCheck is a frontend-only prototype: no backend, Cloud, auth or AI calls; state lives in `src/lib/store.tsx` (React context + localStorage). Why: spec forbids external services.
-- All metrics derive from `SYNTHETIC_LINES` run through `src/lib/demo-engine.ts` with the active policy; never hardcode KPI numbers. Why: displayed values must reconcile with the dataset.
-- The detection engine must never read `planted_issue`; it is used only by `evaluate()`. Why: it's the answer key for accuracy scoring.
-- The synthetic dataset is generated deterministically from a fixed seed; changing it shifts every count, so re-run `src/test/demo-engine.test.ts`. Why: reproducible demo numbers.
+- The Python engine (via the ClaimCheck API at https://claimcheck-api.vercel.app) is the source of truth for detection, findings, AI review and accuracy. Why: the owner approved connecting this front end to the API.
+- The browser engine (`src/lib/demo-engine.ts`) stays as an offline fallback only, used when the API is unreachable, and the UI must say so when it's in use. Why: the demo must still work without the API, but never silently.
+- No API keys, secrets or tokens in this front end, ever. The API holds the AI key server-side. Why: security.
+- Synthetic data only. `planted_issue` is an evaluation label; never use it for detection. Why: it's the answer key for accuracy scoring.
+- No hard-coded KPI numbers: show what the API (or the fallback engine) returns. Why: displayed values must reconcile with the data source.
+- Review statuses, notes and audit events stay in the browser (localStorage); the API is stateless. Why: the API has no persistence.
 - Colors use semantic tokens in `src/styles.css`, including `--sev-high/medium/low`; severity always pairs color with an icon and label. Why: theming and accessibility.
+
+- The shared store loads the API through TanStack Query after browser hydration and commits sample/analysis as one snapshot; policy refreshes retain that snapshot until successful. Why: never mix engines or show partial results.
+- Persist the selected engine separately from a session-only API failure; active employee and evaluation data must follow the selected data source. Why: an outage must not permanently disable Python or mix datasets.
+- Normalize fallback accuracy to the API evaluation shape in a browser-safe scoring adapter; return Python evaluation unchanged. Why: preserve server scores and row order without running browser scoring for Python.
+- Explicit Python runs commit source lines and analysis together through the shared store; policy refreshes reuse that source and request versions prevent stale refreshes overwriting runs. Why: uploads, findings, employees, and evaluation must stay aligned across screens.
+- Keep CSV validation browser-safe and preserve typed API validation errors without switching engines on 422. Why: users can correct rejected synthetic uploads without losing the previous Python snapshot.
+- AI Review hands off the active source to Analysis via a typed one-shot AI search flag; API explanations use returned reasons and model metadata, not simulated templates. Why: reviewing an upload must not silently rerun the bundled dataset.
+- Settings connection tests query public health independently of detection; selecting Python retries a failed initial request. Why: offline users can inspect connectivity and recover without persisting an outage or mixing datasets.

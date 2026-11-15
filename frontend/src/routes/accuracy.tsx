@@ -3,15 +3,16 @@ import { useMemo } from "react";
 import { BookMarked, FlaskConical, Info } from "lucide-react";
 import { PageHeader, Panel, Kpi, InfoTip, Notice, SimLabel } from "@/components/shared/ui-bits";
 import { SeverityBadge } from "@/components/shared/badges";
-import { SYNTHETIC_LINES } from "@/data/synthetic/dataset";
-import { runEngine, evaluate } from "@/lib/demo-engine";
-import { DEFAULT_POLICY } from "@/lib/policy-defaults";
+import { accuracyEvaluation } from "@/lib/accuracy";
+import { useDemo } from "@/lib/store";
 import { RULE_BY_ID } from "@/lib/rules";
 import { pct, int } from "@/lib/format";
 
 export const Route = createFileRoute("/accuracy")({
   head: () => ({
     meta: [
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
       { title: "Detection Accuracy — ClaimCheck" },
       {
         name: "description",
@@ -33,63 +34,85 @@ const PRECISION =
 const RECALL =
   "Recall: of all real (planted) exceptions, the share that was flagged. Low recall means problems slip through unreviewed.";
 const ratio = (a: number, b: number) => (b ? a / b : 0);
+const score = (value: number | null, digits = 1) => (value === null ? "—" : pct(value, digits));
 
 function Accuracy() {
+  const { engine, lines, flagged, analysis } = useDemo();
   const e = useMemo(
-    () => evaluate(SYNTHETIC_LINES, runEngine(SYNTHETIC_LINES, DEFAULT_POLICY)),
-    [],
+    () => accuracyEvaluation(engine, lines, flagged, analysis),
+    [engine, lines, flagged, analysis],
   );
-  const rFp = e.rule.detected - e.rule.tp;
-  const rMiss = e.rule.planted - e.rule.tp;
+  if (!e)
+    return (
+      <>
+        <PageHeader title="Detection Accuracy" subtitle="Synthetic planted-answer evaluation" />
+        <Notice icon={<Info className="h-4 w-4" />}>
+          {analysis
+            ? "The API did not return an evaluation for this analysis."
+            : "Connecting to the Python engine…"}
+        </Notice>
+      </>
+    );
+  const rule = e.rule_totals;
+  const tx = e.tx_totals;
+  const rFp = rule.fp;
+  const rMiss = rule.missed;
   return (
     <>
       <PageHeader
         title="Detection Accuracy"
-        subtitle="How the frontend demonstration ruleset performs against synthetic planted-answer labels, using default policy."
+        subtitle={`How the ${engine === "python" ? "Python engine" : "browser demonstration ruleset"} performs against synthetic planted-answer labels, using the active policy.`}
         actions={<SimLabel>Synthetic evaluation</SimLabel>}
       />
       <div className="mb-4">
         <Notice icon={<Info className="h-4 w-4" />}>
-          Figures below are <strong>measured in your browser</strong> by comparing this prototype's
-          rules to the planted labels in the synthetic dataset. They are not production performance
-          and have not been independently verified.
+          {engine === "python" ? (
+            "Measured by the Python engine on the server, comparing its findings to the planted labels in the synthetic dataset. Rules only unless AI review was run. Not production performance."
+          ) : (
+            <>
+              Figures below are <strong>measured in your browser</strong> against the planted labels
+              in the active synthetic dataset. They are not production performance and have not been
+              independently verified.
+            </>
+          )}
         </Notice>
       </div>
 
       <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
-        Prototype ruleset · measured on synthetic data
+        {engine === "python" ? "Python engine" : "Browser prototype ruleset"} · measured on
+        synthetic data
       </h2>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Kpi
           label="Rule-level precision"
-          value={pct(ratio(e.rule.tp, e.rule.detected))}
-          sub={`${e.rule.tp} of ${e.rule.detected} detections`}
+          value={score(rule.precision)}
+          sub={`${rule.tp} of ${rule.detected} detections`}
           tip={PRECISION}
         />
         <Kpi
           label="Rule-level recall"
-          value={pct(ratio(e.rule.tp, e.rule.planted))}
-          sub={`${e.rule.tp} of ${e.rule.planted} planted`}
+          value={score(rule.recall)}
+          sub={`${rule.tp} of ${rule.planted} planted`}
           tip={RECALL}
         />
         <Kpi
           label="Transaction-level precision"
-          value={pct(ratio(e.tx.tp, e.tx.flagged))}
-          sub={`${e.tx.tp} of ${e.tx.flagged} flagged lines`}
+          value={pct(ratio(tx.tp, tx.flagged))}
+          sub={`${tx.tp} of ${tx.flagged} flagged lines`}
           tip={`${PRECISION} Counted per unique expense line, regardless of which rule fired.`}
         />
         <Kpi
           label="Transaction-level recall"
-          value={pct(ratio(e.tx.tp, e.tx.plantedLines))}
-          sub={`${e.tx.tp} of ${e.tx.plantedLines} planted lines`}
+          value={pct(ratio(tx.tp, tx.planted_lines))}
+          sub={`${tx.tp} of ${tx.planted_lines} planted lines`}
           tip={`${RECALL} Counted per unique expense line.`}
         />
-        <Kpi label="True positives" value={int(e.rule.tp)} sub="Rule-level, line ID + rule match" />
+        <Kpi label="True positives" value={int(rule.tp)} sub="Rule-level, line ID + rule match" />
         <Kpi label="False positives" value={int(rFp)} sub="Rule fired with no planted label" />
         <Kpi label="Missed exceptions" value={int(rMiss)} sub="Planted but not detected" />
         <Kpi
           label="Clean lines incorrectly flagged"
-          value={int(e.tx.fp)}
+          value={int(tx.fp)}
           sub="Lines with no planted issue"
         />
       </div>
@@ -120,18 +143,22 @@ function Accuracy() {
                 </tr>
               </thead>
               <tbody className="num">
-                {e.perRule.map((r) => (
+                {e.per_rule.map((r) => (
                   <tr key={r.rule} className="border-t border-border">
                     <td className="px-4 py-2 font-medium">
-                      {RULE_BY_ID[r.rule].name}
-                      {RULE_BY_ID[r.rule].kind !== "Deterministic" && (
+                      {r.label}
+                      {r.rule !== "all" && RULE_BY_ID[r.rule]?.kind !== "Deterministic" && (
                         <span className="ml-1 text-[10.5px] font-normal text-muted-foreground">
                           (heuristic)
                         </span>
                       )}
                     </td>
                     <td className="px-2 py-2">
-                      <SeverityBadge severity={RULE_BY_ID[r.rule].severity} />
+                      {r.rule !== "all" && RULE_BY_ID[r.rule] ? (
+                        <SeverityBadge severity={RULE_BY_ID[r.rule].severity} />
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="px-2 py-2 text-right">{r.planted}</td>
                     <td className="px-2 py-2 text-right">{r.detected}</td>
@@ -146,25 +173,21 @@ function Accuracy() {
                     >
                       {r.missed}
                     </td>
-                    <td className="px-2 py-2 text-right">{pct(ratio(r.tp, r.detected), 0)}</td>
-                    <td className="px-4 py-2 text-right">{pct(ratio(r.tp, r.planted), 0)}</td>
+                    <td className="px-2 py-2 text-right">{score(r.precision, 0)}</td>
+                    <td className="px-4 py-2 text-right">{score(r.recall, 0)}</td>
                   </tr>
                 ))}
                 <tr className="border-t-2 border-border bg-secondary/40 font-semibold">
                   <td className="px-4 py-2" colSpan={2}>
                     All rules
                   </td>
-                  <td className="px-2 py-2 text-right">{e.rule.planted}</td>
-                  <td className="px-2 py-2 text-right">{e.rule.detected}</td>
-                  <td className="px-2 py-2 text-right">{e.rule.tp}</td>
+                  <td className="px-2 py-2 text-right">{rule.planted}</td>
+                  <td className="px-2 py-2 text-right">{rule.detected}</td>
+                  <td className="px-2 py-2 text-right">{rule.tp}</td>
                   <td className="px-2 py-2 text-right">{rFp}</td>
                   <td className="px-2 py-2 text-right">{rMiss}</td>
-                  <td className="px-2 py-2 text-right">
-                    {pct(ratio(e.rule.tp, e.rule.detected), 0)}
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    {pct(ratio(e.rule.tp, e.rule.planted), 0)}
-                  </td>
+                  <td className="px-2 py-2 text-right">{score(rule.precision, 0)}</td>
+                  <td className="px-4 py-2 text-right">{score(rule.recall, 0)}</td>
                 </tr>
               </tbody>
             </table>
@@ -175,12 +198,12 @@ function Accuracy() {
           <Panel title="Transaction-level summary">
             <dl className="num space-y-1.5 text-sm">
               {[
-                ["Synthetic lines", int(SYNTHETIC_LINES.length)],
-                ["Lines with a planted issue", int(e.tx.plantedLines)],
-                ["Lines flagged", int(e.tx.flagged)],
-                ["Correctly flagged lines", int(e.tx.tp)],
-                ["Clean lines flagged", int(e.tx.fp)],
-                ["Planted lines missed", int(e.tx.missed)],
+                ["Synthetic lines", int(tx.lines)],
+                ["Lines with a planted issue", int(tx.planted_lines)],
+                ["Lines flagged", int(tx.flagged)],
+                ["Correctly flagged lines", int(tx.tp)],
+                ["Clean lines flagged", int(tx.fp)],
+                ["Planted lines missed", int(tx.missed)],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between">
                   <dt className="text-muted-foreground">{k}</dt>
@@ -189,36 +212,38 @@ function Accuracy() {
               ))}
             </dl>
           </Panel>
-          <section
-            className="rounded-lg border-2 border-dashed border-sev-medium/50 bg-sev-medium-soft/50 p-4"
-            aria-labelledby="ref-title"
-          >
-            <h2 id="ref-title" className="flex items-center gap-1.5 text-sm font-semibold">
-              <BookMarked className="h-4 w-4" aria-hidden="true" />
-              Python engine reference results
-            </h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Offline results of the Python engine on its own synthetic dataset, reproduced by
-              GitHub Actions CI (run 43370291609, commit b87a901). A different dataset from this
-              prototype, so the numbers are not directly comparable.
-            </p>
-            <dl className="num mt-3 grid grid-cols-2 gap-2 text-sm">
-              {[
-                ["Synthetic lines", "1,937"],
-                ["Planted rule-level exceptions", "109"],
-                ["Detected", "99"],
-                ["Missed", "10"],
-                ["False positives", "4"],
-                ["Recall", "≈ 91%"],
-                ["Precision", "≈ 96%"],
-              ].map(([k, v]) => (
-                <div key={k} className="rounded-md bg-card/80 px-2.5 py-1.5">
-                  <dt className="text-[11px] text-muted-foreground">{k}</dt>
-                  <dd className="font-semibold">{v}</dd>
-                </div>
-              ))}
-            </dl>
-          </section>
+          {engine === "browser" && (
+            <section
+              className="rounded-lg border-2 border-dashed border-sev-medium/50 bg-sev-medium-soft/50 p-4"
+              aria-labelledby="ref-title"
+            >
+              <h2 id="ref-title" className="flex items-center gap-1.5 text-sm font-semibold">
+                <BookMarked className="h-4 w-4" aria-hidden="true" />
+                Python engine reference results
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Offline results of the Python engine on its own synthetic dataset, reproduced by
+                GitHub Actions CI (run 43370291609, commit b87a901). A different dataset from this
+                prototype, so the numbers are not directly comparable.
+              </p>
+              <dl className="num mt-3 grid grid-cols-2 gap-2 text-sm">
+                {[
+                  ["Synthetic lines", "1,937"],
+                  ["Planted rule-level exceptions", "109"],
+                  ["Detected", "99"],
+                  ["Missed", "10"],
+                  ["False positives", "4"],
+                  ["Recall", "≈ 91%"],
+                  ["Precision", "≈ 96%"],
+                ].map(([k, v]) => (
+                  <div key={k} className="rounded-md bg-card/80 px-2.5 py-1.5">
+                    <dt className="text-[11px] text-muted-foreground">{k}</dt>
+                    <dd className="font-semibold">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          )}
         </div>
       </div>
 
@@ -235,7 +260,7 @@ function Accuracy() {
           {[
             [
               "Synthetic planted-answer labels",
-              "Each synthetic line carries an optional planted_issue label recording the single rule it was designed to trigger. The detection engine never reads this field; it is used only for scoring.",
+              "Each synthetic line carries an optional planted_issue label recording the rules it was designed to trigger. The detection engine never reads this field; it is used only for scoring. planted_issue can carry more than one rule per line, and each line-rule pair is scored.",
             ],
             [
               "Rule-level matching",

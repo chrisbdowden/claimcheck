@@ -34,8 +34,8 @@ export interface ExpenseLine {
   amount_usd: number;
   receipt_attached: boolean;
   description: string;
-  /** Evaluation label only. Never read by the detection engine. */
-  planted_issue?: RuleId | "";
+  /** Evaluation label only. Never read by the detection engine. May hold several rule IDs joined with "|". */
+  planted_issue?: string;
 }
 
 export interface Employee {
@@ -65,6 +65,8 @@ export interface FlaggedLine {
   line: ExpenseLine;
   findings: Finding[];
   severity: Severity;
+  /** Short summary supplied by the API; absent for local engine results. */
+  reason?: string;
 }
 
 export interface HistoryEvent {

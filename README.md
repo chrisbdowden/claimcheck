@@ -4,11 +4,11 @@ ClaimCheck reviews every line of an expense export instead of a sample. It check
 
 > Demo on synthetic data. No real employee or employer data is used.
 
-**Live demo (Python app):** https://claimcheck-dowden.streamlit.app (offline mode, no API key)
+**Full app (live):** https://claimcheck-truth-compass.lovable.app is the reviewer app built in Lovable (`frontend/`). It runs on the Python engine through the API, and its optional live Claude review is rate-limited.
 
-**API (Python engine as a web service):** https://claimcheck-api.vercel.app, the backend the front end calls; see [service/README.md](service/README.md).
+**API (Python engine as a web service):** https://claimcheck-api.vercel.app is the backend the app calls. See [service/README.md](service/README.md).
 
-**Front-end prototype (live):** https://claimcheck-truth-compass.lovable.app, the reviewer experience built in Lovable (`frontend/`), using the same 10 rules in the browser on its own synthetic dataset.
+**Quick demo (Python app):** https://claimcheck-dowden.streamlit.app (offline mode, no API key)
 
 ![Exception queue: every flagged line ranked by severity, with the reason it was flagged](docs/screenshots/exception-queue.png)
 

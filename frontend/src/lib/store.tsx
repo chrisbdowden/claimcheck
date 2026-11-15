@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -11,7 +12,29 @@ import { SYNTHETIC_LINES, EMPLOYEE_BY_ID } from "@/data/synthetic/dataset";
 import { DEFAULT_POLICY } from "./policy-defaults";
 import { runEngine, toFlagged } from "./demo-engine";
 import { SEVERITY_RANK } from "./rules";
-import type { ExpenseLine, FlaggedLine, HistoryEvent, Policy, ReviewStatus } from "./types";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  analyze,
+  ApiError,
+  getHealth,
+  getSample,
+  toFlaggedLine,
+  type ApiAnalysis,
+  type ApiHealth,
+  type ApiSample,
+  type AnalyzeRequest,
+} from "./api";
+import type {
+  Employee,
+  ExpenseLine,
+  FlaggedLine,
+  HistoryEvent,
+  Policy,
+  ReviewStatus,
+} from "./types";
+
+export type Engine = "python" | "browser";
+const EMPTY_LINES: ExpenseLine[] = [];
 
 export type DatePreset = "h1" | "q1" | "q2" | "jun";
 export const DATE_PRESETS: Record<DatePreset, { label: string; from: string; to: string }> = {
@@ -66,7 +89,7 @@ function seedHistory(flagged: FlaggedLine[]): HistoryEvent[] {
         (3 + (i % 9)) * 86400000 +
         (9 + (i % 8)) * 3600000,
     );
-    const user = users[i % 3]!;
+    const user = users[i % 3] ?? CURRENT_USER;
     ev.push({
       id: `seed-${i}-a`,
       timestamp: d.toISOString(),
@@ -98,13 +121,26 @@ function seedHistory(flagged: FlaggedLine[]): HistoryEvent[] {
     timestamp: "2026-07-01T08:00:00.000Z",
     user: "System (demo)",
     type: "Analysis run",
-    note: "Bundled synthetic dataset analyzed with frontend demonstration ruleset.",
+    note: "Synthetic dataset analyzed; review history is simulated in this browser.",
   });
   return ev.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 }
 
 interface Store {
+  engine: Engine;
+  setEngine: (engine: Engine) => void;
+  apiStatus: "loading" | "ready" | "error";
+  apiError?: string | undefined;
+  analysis?: ApiAnalysis | undefined;
+  apiHealth?: ApiHealth | undefined;
+  aiUsed: boolean;
+  aiNotes: string[];
+  runAnalysis: (request: AnalyzeRequest) => Promise<ApiAnalysis>;
+  analysisSource: "bundled" | "upload";
+  employees: Employee[];
+  employeeById: Record<string, Employee>;
   lines: ExpenseLine[];
+  bundledLines: ExpenseLine[];
   flagged: FlaggedLine[];
   flaggedById: Map<string, FlaggedLine>;
   lineById: Map<string, ExpenseLine>;
@@ -143,13 +179,27 @@ export function DemoProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [engineChoice, setEngineChoice] = useState<Engine>("python");
+  const [apiError, setApiError] = useState<string>();
+  const [snapshot, setSnapshot] = useState<{
+    sample: ApiSample;
+    analysis: ApiAnalysis;
+    health: ApiHealth;
+    source?: "bundled" | "upload";
+  }>();
+  const savedPolicy = useRef<Policy | undefined>(undefined);
+  const engine = apiError ? "browser" : engineChoice;
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) {
         const s = JSON.parse(raw);
-        if (s.policy) setPolicyState(s.policy);
+        if (s.policy) {
+          savedPolicy.current = s.policy;
+          setPolicyState(s.policy);
+        }
+        if (s.engine === "python" || s.engine === "browser") setEngineChoice(s.engine);
         if (s.statusOverrides) setStatusOverrides(s.statusOverrides);
         if (s.notes) setNotes(s.notes);
         if (s.userEvents) setUserEvents(s.userEvents);
@@ -165,28 +215,142 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     if (!hydrated) return;
     localStorage.setItem(
       KEY,
-      JSON.stringify({ policy, statusOverrides, notes, userEvents, provider, settings }),
+      JSON.stringify({
+        policy,
+        statusOverrides,
+        notes,
+        userEvents,
+        provider,
+        settings,
+        engine: engineChoice,
+      }),
     );
-  }, [hydrated, policy, statusOverrides, notes, userEvents, provider, settings]);
+  }, [hydrated, policy, statusOverrides, notes, userEvents, provider, settings, engineChoice]);
   useEffect(() => {
     document.documentElement.classList.toggle("dark", settings.theme === "dark");
   }, [settings.theme]);
 
-  const lines = SYNTHETIC_LINES;
+  const initial = useQuery({
+    queryKey: ["claimcheck", "bundled"],
+    enabled: hydrated && engine === "python",
+    retry: false,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    queryFn: async () => {
+      const [sample, health] = await Promise.all([getSample(), getHealth()]);
+      const result = await analyze({
+        source: "bundled",
+        policy: savedPolicy.current ?? sample.policy,
+      });
+      return { sample, analysis: result, health };
+    },
+  });
+  useEffect(() => {
+    if (engine !== "python") return;
+    if (initial.error && !initial.isFetching) setApiError(initial.error.message);
+    else if (initial.data && !snapshot) {
+      setSnapshot(initial.data);
+      setPolicyState(initial.data.analysis.policy);
+    }
+  }, [engine, initial.error, initial.isFetching, initial.data, snapshot]);
+
+  const refresh = useMutation({
+    mutationFn: (request: AnalyzeRequest) => analyze(request),
+  });
+  const { mutateAsync } = refresh;
+  const requestVersion = useRef(0);
+  const [analysisRunning, setAnalysisRunning] = useState(false);
+  const runAnalysis = useCallback(
+    async (request: AnalyzeRequest) => {
+      if (engine !== "python" || !snapshot) throw new Error("Python engine is not ready.");
+      const version = ++requestVersion.current;
+      setAnalysisRunning(true);
+      try {
+        const result = await mutateAsync(request);
+        if (version === requestVersion.current) {
+          const data =
+            request.source === "upload"
+              ? (request.lines ?? [])
+              : (initial.data?.sample.lines ?? snapshot.sample.lines);
+          setSnapshot({
+            sample: { lines: data, policy: result.policy },
+            analysis: result,
+            health: snapshot.health,
+            source: request.source,
+          });
+          setPolicyState(result.policy);
+          setSelectedId(null);
+        }
+        return result;
+      } catch (error) {
+        if (
+          version === requestVersion.current &&
+          !(error instanceof ApiError && error.status === 422)
+        )
+          setApiError(error instanceof Error ? error.message : String(error));
+        throw error;
+      } finally {
+        if (version === requestVersion.current) setAnalysisRunning(false);
+      }
+    },
+    [engine, snapshot, mutateAsync, initial.data],
+  );
+  useEffect(() => {
+    if (
+      engine !== "python" ||
+      analysisRunning ||
+      !snapshot ||
+      JSON.stringify(policy) === JSON.stringify(snapshot.analysis.policy)
+    )
+      return;
+    let active = true;
+    const version = requestVersion.current;
+    const timer = setTimeout(() => {
+      void mutateAsync({
+        source: snapshot.source ?? "bundled",
+        ...(snapshot.source === "upload" ? { lines: snapshot.sample.lines } : {}),
+        policy,
+        use_ai: false,
+      }).then(
+        (result) => {
+          if (active && version === requestVersion.current)
+            setSnapshot((previous) => (previous ? { ...previous, analysis: result } : previous));
+        },
+        (error: unknown) => {
+          if (active && version === requestVersion.current)
+            setApiError(error instanceof Error ? error.message : String(error));
+        },
+      );
+    }, 500);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [engine, policy, snapshot, mutateAsync, analysisRunning]);
+  const analysis = engine === "python" ? snapshot?.analysis : undefined;
+  const apiStatus = apiError
+    ? "error"
+    : engine === "python" &&
+        (analysisRunning ||
+          !snapshot ||
+          JSON.stringify(policy) !== JSON.stringify(snapshot.analysis.policy))
+      ? "loading"
+      : "ready";
+  const lines = engine === "python" ? (snapshot?.sample.lines ?? EMPTY_LINES) : SYNTHETIC_LINES;
   const lineById = useMemo(() => new Map(lines.map((l) => [l.line_id, l])), [lines]);
   const flagged = useMemo(() => {
-    const f = toFlagged(lines, runEngine(lines, policy));
+    const f =
+      engine === "python"
+        ? (analysis?.flagged.map(toFlaggedLine) ?? [])
+        : toFlagged(lines, runEngine(lines, policy));
     return f.sort(
       (a, b) =>
         SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] ||
         b.line.amount_usd - a.line.amount_usd,
     );
-  }, [lines, policy]);
+  }, [lines, policy, engine, analysis]);
   const flaggedById = useMemo(() => new Map(flagged.map((f) => [f.line.line_id, f])), [flagged]);
-  const seeded = useMemo(
-    () => seedHistory(toFlagged(lines, runEngine(lines, DEFAULT_POLICY))),
-    [lines],
-  );
+  const seeded = useMemo(() => seedHistory(flagged), [flagged]);
   const history = useMemo(() => [...userEvents, ...seeded], [userEvents, seeded]);
 
   const logEvent = useCallback((e: Omit<HistoryEvent, "id" | "timestamp" | "user">) => {
@@ -245,10 +409,48 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     setProvider("offline");
     setSettings(DEFAULT_SETTINGS);
   }, []);
-  const employeeName = useCallback((id: string) => EMPLOYEE_BY_ID[id]?.name ?? id, []);
+  const employeeById = useMemo<Record<string, Employee>>(() => {
+    if (engine === "browser") return EMPLOYEE_BY_ID;
+    return Object.fromEntries(
+      (snapshot?.sample.lines ?? []).map((line) => [
+        line.employee_id,
+        {
+          id: line.employee_id,
+          name: line.employee_name ?? line.employee_id,
+          department: "—",
+        },
+      ]),
+    );
+  }, [engine, snapshot]);
+  const employees = useMemo(() => Object.values(employeeById), [employeeById]);
+  const employeeName = useCallback((id: string) => employeeById[id]?.name ?? id, [employeeById]);
+  const initialError = initial.error;
+  const refetchInitial = initial.refetch;
+  const setEngine = useCallback(
+    (choice: Engine) => {
+      setEngineChoice(choice);
+      setApiError(undefined);
+      if (choice === "python" && initialError) void refetchInitial();
+    },
+    [initialError, refetchInitial],
+  );
 
   const value: Store = {
+    engine,
+    setEngine,
+    apiStatus,
+    apiError,
+    analysis,
+    apiHealth: snapshot?.health,
+    aiUsed: analysis?.ai.used ?? false,
+    aiNotes: analysis?.notes ?? [],
+    runAnalysis,
+    analysisSource: snapshot?.source ?? "bundled",
+    employees,
+    employeeById,
     lines,
+    bundledLines:
+      engine === "python" ? (initial.data?.sample.lines ?? EMPTY_LINES) : SYNTHETIC_LINES,
     flagged,
     flaggedById,
     lineById,
