@@ -55,6 +55,12 @@ def fake_reviewer(provider, tmp_path):
     rv.model = "test-model"
     rv.cache_path = tmp_path / "cache.json"
     rv.cache = {}
+    rv.max_workers = 4
+    rv.deadline = None
+    rv._lock = __import__("threading").Lock()
+    rv.failed_batches = 0
+    rv.unchecked_line_ids = set()
+    rv.calls = 0
     return rv
 
 
@@ -78,7 +84,7 @@ def no_real_keys(monkeypatch):
 @pytest.mark.parametrize("provider", ["anthropic", "xai"])
 def test_ai_catches_subtle_mismatch_and_writes_reasons(provider, tmp_path, monkeypatch):
     rv = fake_reviewer(provider, tmp_path)
-    monkeypatch.setattr(ai_review, "AIReviewer", lambda api_key=None, provider=None: rv)
+    monkeypatch.setattr(ai_review, "AIReviewer", lambda **kwargs: rv)
     res = run(sample(), default_policy(), use_ai=True, api_key="test", provider=provider)
     assert res.ai_used
     assert res.summary["ai_mode"] == f"{provider}: test-model"
@@ -118,3 +124,19 @@ def test_provider_selection(monkeypatch):
 def test_missing_key_raises_clear_error():
     with pytest.raises(RuntimeError, match="XAI_API_KEY is not set"):
         ai_review.AIReviewer(provider="xai")
+
+
+def test_failed_ai_batches_fall_back_to_keyword_check(tmp_path, monkeypatch):
+    rv = fake_reviewer("anthropic", tmp_path)
+
+    def boom(*a, **k):
+        raise RuntimeError("provider down")
+
+    rv.client.messages.create = boom
+    monkeypatch.setattr(ai_review, "AIReviewer", lambda **kwargs: rv)
+    df = sample()
+    df.loc[1, "description"] = "Gym membership renewal"          # obvious mismatch for the keyword check
+    res = run(df, default_policy(), use_ai=True, api_key="test", provider="anthropic")
+    assert res.ai_used
+    assert "description_mismatch" in res.exceptions.set_index("line_id").loc["L2", "rule_codes"]
+    assert any("keyword check" in n for n in res.notes)
