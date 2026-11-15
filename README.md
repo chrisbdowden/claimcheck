@@ -4,7 +4,15 @@ ClaimCheck reviews every line of an expense export instead of a sample. It check
 
 > Demo on synthetic data. No real employee or employer data is used.
 
-![ClaimCheck screenshot](docs/screenshot.png) <!-- add after deploying -->
+**Front-end prototype (live):** https://claimcheck-truth-compass.lovable.app, the reviewer experience built in Lovable (`frontend/`), using the same 10 rules in the browser on its own synthetic dataset.
+
+![Exception queue: every flagged line ranked by severity, with the reason it was flagged](docs/screenshots/exception-queue.png)
+
+| Flags by rule | Accuracy against the planted answer key |
+| --- | --- |
+| ![Flags by rule](docs/screenshots/flags-by-rule.png) | ![Accuracy tab](docs/screenshots/accuracy.png) |
+
+Screenshots: the Streamlit app in offline mode on the bundled synthetic data.
 
 ## Results on the synthetic test set
 
@@ -61,7 +69,7 @@ All limits and lists live in `data/policy.csv` and can be edited in Excel. The p
 ## Run it locally
 
 ```bash
-python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+python -m venv .venv && source .venv/bin/activate      # Windows: see below
 pip install --require-hashes -r requirements.lock      # Python 3.11, exact pinned versions
 # (or: pip install -r requirements.txt on other Python versions)
 
@@ -71,6 +79,19 @@ python -m pytest -q                # 45 tests, no network calls
 python scripts/scan_secrets.py     # credential scan of tracked files
 streamlit run app.py               # the web app
 ```
+
+### Windows (PowerShell)
+
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\activate
+pip install --require-hashes -r requirements.lock      # or: pip install -r requirements.txt
+python -m pytest -q
+python -m src.pipeline --no-ai
+streamlit run app.py
+```
+
+In a folder that isn't a Git checkout (a ZIP download or copied folder), the tracked-file secret-scan test is skipped (44 passed, 1 skipped); CI always runs it.
 
 ### Turn on the AI step (paid inference: approve before running)
 
@@ -83,7 +104,18 @@ python -m src.pipeline                     # AI mode
 unset ANTHROPIC_API_KEY                    # clear it when done
 ```
 
-On Windows use `set NAME=value`. If `AI_PROVIDER` is unset, the first provider with a key is used (Anthropic, then xAI). Default models: `claude-haiku-5-5` and `grok-4.5`; override with `CLAIMCHECK_MODEL` (check docs.x.ai for current Grok model names). In the app, pick the provider in the sidebar; keys come from Streamlit secrets. Responses are cached in `output/ai_cache.json`, so re-runs are free. Use a dedicated key with a low monthly spend limit.
+On Windows PowerShell, copy the key from your password manager and load it from the clipboard, so it never appears on screen or in your command history:
+
+```powershell
+$env:ANTHROPIC_API_KEY = (Get-Clipboard).Trim()
+Set-Clipboard -Value " "                                   # clear the clipboard
+if ($env:ANTHROPIC_API_KEY -like "sk-ant-*") { "key is set" } else { "key NOT set" }
+python -m src.pipeline
+```
+
+If you type it instead, keep the quotes: `$env:ANTHROPIC_API_KEY="..."`. Never paste a key into a chat, issue or file. If one is exposed, delete it in the console and create a new one.
+
+If `AI_PROVIDER` is unset, the first provider with a key is used (Anthropic, then xAI). Default models: `claude-haiku-5-5` and `grok-4.5`; override with `CLAIMCHECK_MODEL` (check docs.x.ai for current Grok model names). In the app, pick the provider in the sidebar; keys come from Streamlit secrets. Responses are cached in `output/ai_cache.json`, so re-runs are free. Use a dedicated key with a low monthly spend limit.
 
 ## Deploy a public demo (free)
 
