@@ -4,6 +4,8 @@ ClaimCheck reviews every line of an expense export instead of a sample. It check
 
 > Demo on synthetic data. No real employee or employer data is used.
 
+**Live demo (Python app):** https://claimcheck-dowden.streamlit.app (offline mode, no API key)
+
 **Front-end prototype (live):** https://claimcheck-truth-compass.lovable.app, the reviewer experience built in Lovable (`frontend/`), using the same 10 rules in the browser on its own synthetic dataset.
 
 ![Exception queue: every flagged line ranked by severity, with the reason it was flagged](docs/screenshots/exception-queue.png)
@@ -16,7 +18,14 @@ Screenshots: the Streamlit app in offline mode on the bundled synthetic data.
 
 ## Results on the synthetic test set
 
-Offline mode (rules + keyword description check, no API key), 1,937 synthetic lines, 109 planted exceptions:
+1,937 synthetic lines, 109 planted exceptions. Offline uses the rules plus a keyword description check; AI mode adds Claude (`claude-haiku-5-5`) for rule 10 and the reasons.
+
+| | Found (recall) | Flags that were real (precision) | Description mismatches found | Clean lines wrongly flagged |
+| --- | ---: | ---: | ---: | ---: |
+| Offline | 99 of 109 (91%) | 96% | 8 of 13 | 4 of 1,831 |
+| AI mode | 104 of 109 (95%) | 93% | 13 of 13 | 5 of 1,831 |
+
+### Offline, by rule
 
 | Rule | Planted | Found | False positives | Missed |
 | --- | ---: | ---: | ---: | ---: |
@@ -39,7 +48,17 @@ Offline mode (rules + keyword description check, no API key), 1,937 synthetic li
   - **5 description mismatches** are personal spend written in business words ("Family dinner while on vacation"). The keyword check can't see these; the Claude AI step is built to catch them.
   - **4 false positives** are same-fare round-trip car rides on one day (legitimate, but identical to a duplicate). A reviewer clears these in seconds.
 
-AI mode has not been scored yet. Run with an API key (below) and add those numbers here; until then, only the offline results above are claimed.
+### AI mode
+
+Run on 2026-11-14 on Windows with `claude-haiku-5-5`, on the dataset as of commit 8d6f0da. It took about 2.5 minutes; responses are cached, so re-runs are free.
+
+- **Description mismatch:** 13 of 13 found (offline: 8), including all 5 personal-spend descriptions written in business words. All other rules are deterministic and scored the same as offline.
+- **8 rule-level false positives:** the same 4 round-trip car rides, plus 4 description flags that weren't in the answer key:
+  - 3 lines already planted as blocked merchants, where the description doesn't fit the merchant ("Team lunch" at a liquor store, "Lunch with client" at a spa). These are real inconsistencies; the answer key only labeled the blocked merchant.
+  - 1 test-data defect: line L0150 was charged at DataNest but described as a SlideCraft license. The generator re-drew the merchant without updating the description. Fixed after this run, along with a second line (L1266) that had the same defect; offline results are unchanged, and a test now checks for it.
+- **5 missed:** the deliberate near-duplicate and two-day split cases, which no rule is tuned to catch.
+
+AI-mode numbers are from that single run, not reproduced in CI (CI never calls a paid model).
 
 ## How it works
 

@@ -230,7 +230,12 @@ class Generator:
                 return
             for line in self.lines:
                 if line["line_id"] in bad:
+                    previous = line["merchant"]
                     line["merchant"], line["merchant_type"] = self.r.choice(MERCHANTS[line["category"]])
+                    if line["category"] in ("Software", "Conference fees"):
+                        # These descriptions name the product bought; keep them matching the new
+                        # merchant (no extra random draws, so the rest of the data is unchanged).
+                        line["description"] = line["description"].replace(previous, line["merchant"])
                     line["amount_usd"] = self.amount(*AMOUNT_RANGE[line["category"]])
                     if line["category"] in POLICY.weekend_restricted_categories:
                         d = line["expense_date"]
