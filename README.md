@@ -4,6 +4,8 @@ ClaimCheck reviews every line of an expense export instead of a sample. It check
 
 > Demo on synthetic data. No real employee or employer data is used.
 
+**For hiring managers and reviewers:** read the [case study](docs/CASE_STUDY.md): the business problem, my role, evaluation results and their limits, in about 3 minutes.
+
 **Full app (live):** https://claimcheck-truth-compass.lovable.app is the reviewer app built in Lovable (`frontend/`). It runs on the Python engine through the API, and its optional live Claude review is rate-limited.
 
 **API (Python engine as a web service):** https://claimcheck-api.vercel.app is the backend the app calls. See [service/README.md](service/README.md).
